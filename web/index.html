@@ -265,6 +265,29 @@
       <p class="ob-sub">自动检测课堂相关软件，可手动指定路径；未安装的项会使用内置降级方案。</p>
       <div class="env-list" id="env-list"><div class="side-empty">检测中…</div></div>
 
+      <div class="icc-box" id="voice-box">
+        <div class="icc-box-head">
+          <b>语音转写模型</b>
+          <span class="tag" id="voice-tag">检测中</span>
+        </div>
+        <p id="voice-hint">本地模型随软件自带、启动即用、完全离线。也可以用云端接口（更准，但需要密钥）。</p>
+        <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="voice-mode" style="width:170px">
+            <option value="local">本地 whisper（推荐）</option>
+            <option value="api">云端接口</option>
+            <option value="off">暂不启用</option>
+          </select>
+          <select id="voice-model" style="width:210px">
+            <option value="ggml-small-q5_1.bin">small · 182MB · 均衡</option>
+            <option value="ggml-base-q5_1.bin">base · 57MB · 轻量</option>
+            <option value="ggml-tiny-q5_1.bin">tiny · 32MB · 最快</option>
+            <option value="ggml-medium-q5_1.bin">medium · 514MB · 更准</option>
+          </select>
+          <button class="btn small" id="voice-test">测试转写</button>
+        </div>
+        <div class="test-result" id="voice-result" hidden></div>
+      </div>
+
       <div class="icc-box" id="icc-box" hidden>
         <div class="icc-box-head">
           <b>InkCanvasForClass 联动</b>
@@ -305,6 +328,7 @@
     <button data-tab="appearance">外观</button>
     <button data-tab="access">访问</button>
     <button data-tab="notify">通知</button>
+    <button data-tab="agent">Agent</button>
     <button data-tab="about">关于</button>
   </div>
   <div class="drawer-body" id="drawer-body"></div>

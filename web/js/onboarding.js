@@ -27,7 +27,7 @@ function goto(n) {
     s.classList.toggle('active', k === n);
     s.classList.toggle('done', k < n);
   });
-  if (n === 3) loadEnv();
+  if (n === 3) { loadEnv(); bindVoice(); }
 }
 
 function renderPresets() {
@@ -213,6 +213,45 @@ function bind() {
       onDone();
     } catch (e) { toast(e.message, 'err'); }
   });
+}
+
+function bindVoice() {
+  const mode = $('#voice-mode');
+  const model = $('#voice-model');
+  if (!mode) return;
+  const asr = cfg.asr || (cfg.asr = {});
+  mode.value = asr.mode === 'api' ? 'api' : (asr.mode === 'off' ? 'off' : 'local');
+  model.value = asr.localModel || 'ggml-small-q5_1.bin';
+  mode.addEventListener('change', () => {
+    asr.mode = mode.value;
+    $('#voice-model').disabled = mode.value !== 'local';
+    $('#voice-tag').textContent = mode.value === 'local' ? '本地模型' : (mode.value === 'api' ? '云端接口' : '未启用');
+  });
+  model.addEventListener('change', () => {
+    asr.localModel = model.value;
+  });
+  $('#voice-test').addEventListener('click', async () => {
+    const box = $('#voice-result');
+    box.hidden = false;
+    box.className = 'test-result';
+    box.textContent = '测试中…';
+    try {
+      // 用系统合成的一小段语音做不了，这里改成检查后端状态
+      const d = await api.get('/api/env');
+      const it = (d.items || []).find((x) => x.id === 'asr' || x.id === 'whisper' || /语音|转写|ASR/i.test(x.name || ''));
+      if (it && it.ok) {
+        box.className = 'test-result ok';
+        box.textContent = '语音模型就绪：' + (it.detail || it.name);
+      } else {
+        box.className = 'test-result warn';
+        box.textContent = '语音模型未就绪：' + ((it && (it.hint || it.detail)) || '请检查模型文件');
+      }
+    } catch (e) {
+      box.className = 'test-result err';
+      box.textContent = e.message;
+    }
+  });
+  $('#voice-model').disabled = mode.value !== 'local';
 }
 
 async function loadEnv() {

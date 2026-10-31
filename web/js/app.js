@@ -1,4 +1,5 @@
 import { api, connectEvents } from './api.js';
+import { applyTheme as applyThemeVars, themeLabel } from './theme.js';
 import { $, $$, el, toast, esc, md, fmtTime, fmtDate, fmtDur } from './util.js';
 import { startOnboarding } from './onboarding.js';
 import { openSettings } from './settings.js';
@@ -67,9 +68,8 @@ function enterApp() {
 /* ---------------- 主题 ---------------- */
 
 function applyTheme(name) {
-  document.documentElement.dataset.theme = name || 'claude';
-  const t = (S.boot?.themes || []).find((x) => x.id === name);
-  $('#theme-name').textContent = t ? t.name : '羊皮纸';
+  const label = applyThemeVars(name, S?.cfg?.ui?.customThemes);
+  $('#theme-name').textContent = themeLabel(name, S?.boot?.themes, S?.cfg?.ui?.customThemes) || label;
 }
 
 function cycleTheme() {

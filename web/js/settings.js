@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import { $, $$, el, toast, esc } from './util.js';
+import { applyTheme } from './theme.js';
 
 let S = null;
 let tab = 'model';
@@ -54,7 +55,7 @@ async function save() {
 function renderTab(name) {
   const body = $('#drawer-body');
   const cfg = S.cfg;
-  const map = { model: modelTab, asr: asrTab, capture: captureTab, lesson: lessonTab, integrations: integTab, appearance: appearTab, access: accessTab, notify: notifyTab, about: aboutTab };
+  const map = { model: modelTab, asr: asrTab, capture: captureTab, lesson: lessonTab, integrations: integTab, appearance: appearTab, access: accessTab, notify: notifyTab, agent: agentTab, about: aboutTab };
   body.innerHTML = (map[name] || modelTab)(cfg);
   bindTab(name);
 }
@@ -226,16 +227,52 @@ function integTab(cfg) {
 
 function appearTab(cfg) {
   const themes = S.boot.themes || [];
+  const custom = (cfg.ui && cfg.ui.customThemes) || [];
   const cards = themes.map((t) => `
     <button class="theme-card ${cfg.ui.theme === t.id ? 'active' : ''}" data-theme="${esc(t.id)}">
       <div class="theme-swatch"><i style="background:${t.id === 'claude' ? '#faf9f5' : t.id === 'graphite' ? '#1a1a19' : t.id === 'mist' ? '#f4f6f8' : '#141815'}"></i>
       <i style="background:${esc(t.swatch)}"></i><i style="background:${t.id === 'claude' ? '#e6e1d5' : t.id === 'graphite' ? '#312e2a' : t.id === 'mist' ? '#dde4ea' : '#2a332c'}"></i></div>
       <b>${esc(t.name)}</b><span>${esc(t.note)}</span>
     </button>`).join('');
+  const customCards = custom.map((t) => `
+    <button class="theme-card ${cfg.ui.theme === t.id ? 'active' : ''}" data-theme="${esc(t.id)}">
+      <div class="theme-swatch"><i style="background:${esc((t.vars || {}).bg || '#fff')}"></i>
+      <i style="background:${esc((t.vars || {}).accent || '#888')}"></i><i style="background:${esc((t.vars || {}).line || '#ddd')}"></i></div>
+      <b>${esc(t.name)}</b><span>自定义</span>
+    </button>`).join('');
   return `
     <h3>主题</h3>
     <div class="desc">界面同时适用于本地窗口与浏览器访问，切换后立即生效。</div>
-    <div class="theme-grid">${cards}</div>
+    <div class="theme-grid">${cards}${customCards}</div>
+
+    <h3>自定义主题</h3>
+    <div class="desc">选一个基础主题，改动颜色后保存成你自己的主题；也可以导出分享给别人。</div>
+    <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
+      <label class="field" style="flex:1;min-width:150px"><span>主题名称</span>
+        <input id="ct-name" placeholder="例如：深夜备课"></label>
+      <label class="field" style="flex:1;min-width:150px"><span>主题 ID</span>
+        <input id="ct-id" placeholder="my-theme"></label>
+    </div>
+    <div class="row" style="gap:10px;flex-wrap:wrap">
+      ${[['bg','背景'],['bg-panel','面板'],['ink','正文'],['ink-2','次要文字'],['line','边线'],['accent','强调色']].map(([k, label]) => `
+        <label class="field" style="width:120px"><span>${label}</span>
+          <input type="color" id="ct-${k}" value="${esc((cfg.ui.customThemes && cfg.ui.customThemes[0] && cfg.ui.customThemes[0].vars && cfg.ui.customThemes[0].vars[k]) || '#ffffff')}"></label>`).join('')}
+    </div>
+    <div class="row" style="gap:8px;margin-top:10px">
+      <button class="btn small" id="ct-save">保存主题</button>
+      <button class="btn small" id="ct-export">导出当前</button>
+      <button class="btn small" id="ct-import">导入 JSON</button>
+      <input type="file" id="ct-file" accept="application/json" hidden>
+      <span class="hint" id="ct-result"></span>
+    </div>
+
+    <h3>主题市场</h3>
+    <div class="row" style="gap:8px;align-items:center">
+      <button class="btn small" id="ct-market">刷新市场</button>
+      <span class="hint">来自社区分享的主题清单</span>
+    </div>
+    <div id="ct-market-list" class="theme-grid" style="margin-top:8px"></div>
+
     <h3>显示</h3>
     <label class="field"><span>信息密度</span>
       <select id="f-density">
@@ -393,7 +430,187 @@ function bindNotify() {
   });
 }
 
+function bindAppearance() {
+  const cfg = S.cfg;
+  const custom = (cfg.ui.customThemes) || [];
+  $$('.theme-card').forEach((b) => b.addEventListener('click', async () => {
+    cfg.ui.theme = b.dataset.theme;
+    $$('.theme-card').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    applyTheme(cfg.ui.theme);
+    saveConfig();
+    toast('已切换到 ' + (b.querySelector('b')?.textContent || cfg.ui.theme), 'ok');
+  }));
+  $('#f-density')?.addEventListener('change', (e) => {
+    cfg.ui.density = e.target.value;
+    document.documentElement.dataset.density = e.target.value;
+    saveConfig();
+  });
+  const result = (msg, cls) => {
+    const r = $('#ct-result');
+    if (r) { r.textContent = msg; r.className = 'hint ' + (cls || ''); }
+  };
+  $('#ct-save')?.addEventListener('click', async () => {
+    const id = ($('#ct-id')?.value || '').trim() || 'my-theme';
+    const name = ($('#ct-name')?.value || '').trim() || '自定义主题';
+    const vars = {};
+    ['bg', 'bg-panel', 'ink', 'ink-2', 'line', 'accent'].forEach((k) => {
+      const v = $('#ct-' + k)?.value;
+      if (v) vars[k] = v;
+    });
+    try {
+      await api.post('/api/themes/save', { id, name, vars });
+      cfg.ui.customThemes = (cfg.ui.customThemes || []).filter((x) => x.id !== id);
+      cfg.ui.customThemes.push({ id, name, vars });
+      cfg.ui.theme = id;
+      applyTheme(id);
+      result('已保存并应用', 'ok');
+      renderTab('appearance');
+    } catch (e) { result(e.message, 'err'); }
+  });
+  $('#ct-export')?.addEventListener('click', () => {
+    const id = cfg.ui.theme;
+    const t = custom.find((x) => x.id === id);
+    if (!t) { result('先选中一个自定义主题再导出', 'err'); return; }
+    const blob = new Blob([JSON.stringify({ format: 'classnote-theme', version: 1, theme: t }, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'classnote-theme-' + id + '.json';
+    a.click();
+    result('已导出', 'ok');
+  });
+  $('#ct-import')?.addEventListener('click', () => $('#ct-file')?.click());
+  $('#ct-file')?.addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {
+      const text = await f.text();
+      const d = await api.post('/api/themes/import', JSON.parse(text));
+      cfg.ui.customThemes = d.custom || [];
+      renderTab('appearance');
+      result('已导入 ' + (d.theme && d.theme.name), 'ok');
+    } catch (err) { result(err.message, 'err'); }
+    e.target.value = '';
+  });
+  $('#ct-market')?.addEventListener('click', async () => {
+    const box = $('#ct-market-list');
+    box.innerHTML = '<div class="desc">加载中…</div>';
+    try {
+      const d = await api.get('/api/themes/market');
+      if (!d.ok) throw new Error(d.error || '加载失败');
+      box.innerHTML = '';
+      for (const t of d.themes || []) {
+        const card = document.createElement('button');
+        card.className = 'theme-card';
+        card.innerHTML = `<div class="theme-swatch"><i style="background:${esc((t.vars || {}).bg || '#fff')}"></i>
+          <i style="background:${esc(t.swatch || (t.vars || {}).accent || '#888')}"></i>
+          <i style="background:${esc((t.vars || {}).line || '#ddd')}"></i></div>
+          <b>${esc(t.name)}</b><span>${esc(t.note || t.author || '社区主题')}</span>`;
+        card.addEventListener('click', async () => {
+          try {
+            const imp = await api.post('/api/themes/import', t);
+            cfg.ui.customThemes = imp.custom || [];
+            cfg.ui.theme = t.id;
+            applyTheme(t.id);
+            renderTab('appearance');
+            toast('已应用 ' + t.name, 'ok');
+          } catch (e) { toast(e.message, 'err'); }
+        });
+        box.append(card);
+      }
+      if (!(d.themes || []).length) box.innerHTML = '<div class="desc">市场里暂时还没有主题</div>';
+    } catch (e) {
+      box.innerHTML = '<div class="desc">' + esc(e.message) + '</div>';
+    }
+  });
+}
+
+function agentTab(cfg) {
+  cfg.agent = cfg.agent || { permission: 'remind' };
+  const levels = [
+    ['all', '全部访问', 'Agent 可直接使用全部本地能力，不再询问'],
+    ['remind', '敏感操作提醒', '涉及写文件 / 执行命令时先提示（推荐）'],
+    ['review', '全部人工审查', '每一步操作都要人工确认'],
+  ];
+  return `
+    <h3>Agent 权限</h3>
+    <div class="desc">控制课堂助手调用本地能力（截图、笔记、报告）时的审批强度。</div>
+    <div class="seg" id="ag-perm" style="margin:10px 0">
+      ${levels.map(([id, name]) => `<button data-v="${id}" class="${cfg.agent.permission === id ? 'active' : ''}">${name}</button>`).join('')}
+    </div>
+    <div class="desc" id="ag-perm-note">${esc((levels.find((x) => x[0] === cfg.agent.permission) || levels[1])[2])}</div>
+
+    <h3>技能包</h3>
+    <div class="desc">技能包是一段可复用的提示词，启用后会并入课堂助手的指令。放在 <code>data/plugins/skills/</code> 里的 JSON 文件。</div>
+    <div id="ag-skills"><div class="desc">加载中…</div></div>
+
+    <h3>模型</h3>
+    <label class="field"><span>课堂助手使用的模型</span>
+      <input id="ag-model" value="${esc(cfg.agent.model || '')}" placeholder="留空则跟随「模型」页的设置">
+    </label>
+  `;
+}
+
+function bindAgent() {
+  const cfg = S.cfg;
+  cfg.agent = cfg.agent || { permission: 'remind' };
+  $$('#ag-perm button').forEach((b) => b.addEventListener('click', async () => {
+    $$('#ag-perm button').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    cfg.agent.permission = b.dataset.v;
+    try {
+      await api.post('/api/agent/permission', { permission: b.dataset.v });
+      toast('权限已更新', 'ok');
+    } catch (e) { toast(e.message, 'err'); }
+  }));
+  $('#ag-model')?.addEventListener('change', async (e) => {
+    cfg.agent.model = e.target.value.trim();
+    try {
+      await api.post('/api/agent/permission', { model: cfg.agent.model });
+    } catch (err) { toast(err.message, 'err'); }
+  });
+  loadSkills();
+}
+
+async function loadSkills() {
+  const box = $('#ag-skills');
+  if (!box) return;
+  try {
+    const d = await api.get('/api/plugins');
+    box.innerHTML = '';
+    for (const sk of d.skills || []) {
+      const row = document.createElement('div');
+      row.className = 'card';
+      row.style.marginBottom = '8px';
+      row.innerHTML = `
+        <div class="row" style="gap:8px;align-items:center">
+          <label class="switch"><input type="checkbox" class="sk-on" data-id="${esc(sk.id)}" ${sk.enabled ? 'checked' : ''}><span></span></label>
+          <b style="flex:1">${esc(sk.name)}</b>
+          ${sk.builtIn ? '<span class="tag">内置</span>' : ''}
+          <button class="btn small danger sk-del" data-id="${esc(sk.id)}">删除</button>
+        </div>
+        <div class="desc" style="margin-top:6px">${esc(sk.description || '')}</div>
+        <div class="desc" style="margin-top:4px;opacity:.75">${esc((sk.prompt || '').slice(0, 120))}</div>
+        <div class="desc" style="margin-top:4px">可用工具：${esc((sk.tools || []).join('、') || '无')}</div>`;
+      box.append(row);
+    }
+    if (!(d.skills || []).length) box.innerHTML = '<div class="desc">还没有技能包</div>';
+    $$('.sk-on').forEach((el) => el.addEventListener('change', async () => {
+      await api.post('/api/plugins/toggle', { id: el.dataset.id, enabled: el.checked });
+      toast(el.checked ? '已启用' : '已停用', 'ok');
+    }));
+    $$('.sk-del').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('确定删除技能包 ' + b.dataset.id + ' 吗？')) return;
+      await api.post('/api/plugins/delete', { id: b.dataset.id });
+      loadSkills();
+    }));
+  } catch (e) {
+    box.innerHTML = '<div class="desc">' + esc(e.message) + '</div>';
+  }
+}
+
 function aboutTab(cfg) {
+  cfg.github = cfg.github || {};
   const a = S.boot.app;
   return `
     <h3>ClassNote</h3>
@@ -403,6 +620,21 @@ function aboutTab(cfg) {
     <div class="kv"><span>工作目录</span><b>${esc(a.paths.root)}</b></div>
     <div class="kv"><span>课堂记录</span><b>${esc(a.paths.sessions)}</b></div>
     <div class="kv"><span>报告输出</span><b>${esc(a.paths.reports)}</b></div>
+    <h3>更新</h3>
+    <div class="field">
+      <label>GitHub 仓库</label>
+      <input id="f-repo" value="${esc((cfg.github && cfg.github.repo) || '')}" placeholder="owner/name">
+      <div class="desc">用于检查新版本。仓库需包含 GitHub Release。</div>
+    </div>
+    <div class="field">
+      <label>GitHub Token（可选，私有仓库需要）</label>
+      <input id="f-ghtoken" type="password" value="${esc((cfg.github && cfg.github.token) || '')}" placeholder="ghp_...">
+    </div>
+    <div class="row" style="gap:8px;align-items:center">
+      <button class="btn small" id="btn-update-check">检查更新</button>
+      <label class="switch"><input type="checkbox" id="f-checkupdates" ${cfg.github && cfg.github.checkUpdates ? 'checked' : ''}><span>启动时自动检查</span></label>
+      <span class="hint" id="update-result"></span>
+    </div>
     <h3>维护</h3>
     <div style="display:flex;gap:6px;flex-wrap:wrap">
       <button class="btn small" data-open="data">打开数据目录</button>
@@ -420,6 +652,23 @@ function bindTab(name) {
   const cfg = S.cfg;
   if (name === 'access') { bindAccess(); return; }
   if (name === 'notify') { bindNotify(); return; }
+  if (name === 'appearance') { bindAppearance(); return; }
+  if (name === 'agent') { bindAgent(); return; }
+  if (name === 'about') {
+    $('#f-repo')?.addEventListener('change', (e) => { cfg.github.repo = e.target.value.trim(); saveConfig(); });
+    $('#f-ghtoken')?.addEventListener('change', (e) => { cfg.github.token = e.target.value.trim(); saveConfig(); });
+    $('#f-checkupdates')?.addEventListener('change', (e) => { cfg.github.checkUpdates = e.target.checked; saveConfig(); });
+    $('#btn-update-check')?.addEventListener('click', async () => {
+      const box = $('#update-result');
+      box.textContent = '检查中…';
+      try {
+        const d = await api.get('/api/update/check');
+        if (d.error) box.textContent = d.error;
+        else if (d.hasUpdate) box.textContent = `发现新版本 ${d.latest}（当前 ${d.current}）`;
+        else box.textContent = `已是最新（${d.current}）`;
+      } catch (e) { box.textContent = e.message; }
+    });
+  }
   if (name === 'model') {
     $$('#s-mode .seg-item').forEach((b) => b.addEventListener('click', () => {
       cfg.provider.mode = b.dataset.mode;

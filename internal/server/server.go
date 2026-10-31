@@ -23,7 +23,9 @@ import (
 	"classnote/internal/logx"
 	"classnote/internal/notify"
 	"classnote/internal/paths"
+	"classnote/internal/plugin"
 	"classnote/internal/store"
+	"classnote/internal/theme"
 )
 
 // Server 是本地应用服务。
@@ -44,6 +46,7 @@ type Server struct {
 	clientErr error
 	started   time.Time
 	notifier  *notify.Notifier
+	plugins   *plugin.Registry
 }
 
 // New 创建服务。
@@ -53,6 +56,15 @@ func New(paths paths.Paths, cfg *config.Store, st *store.Store, engine *lesson.E
 		paths: paths, cfg: cfg, store: st, engine: engine, ci: ci, icc: icc,
 		webFS: webFS, subs: map[chan lesson.Event]bool{}, started: time.Now(),
 		notifier: notify.New(cfg.Get().Notify),
+	}
+	theme.LoadBundled()
+	plugins, err := plugin.Open(filepath.Join(paths.Root, "data", "plugins", "skills"))
+	if err != nil {
+		logx.Warnf("server", "技能包目录不可用: %v", err)
+	}
+	s.plugins = plugins
+	if plugins != nil {
+		engine.SetSkillPrompt(plugins.Prompt())
 	}
 	s.mux = http.NewServeMux()
 	s.routes()
@@ -121,6 +133,19 @@ func (s *Server) routes() {
 	m.HandleFunc("/api/asr/test", s.handleASRTest)
 	m.HandleFunc("/api/notify/test", s.handleNotifyTest)
 	m.HandleFunc("/api/notify/presets", s.handleNotifyPresets)
+	m.HandleFunc("/api/update/check", s.handleUpdateCheck)
+	m.HandleFunc("/api/themes", s.handleThemesList)
+	m.HandleFunc("/api/themes/save", s.handleThemeSave)
+	m.HandleFunc("/api/themes/delete", s.handleThemeDelete)
+	m.HandleFunc("/api/themes/export", s.handleThemeExport)
+	m.HandleFunc("/api/themes/import", s.handleThemeImport)
+	m.HandleFunc("/api/themes/market", s.handleThemeMarket)
+	m.HandleFunc("/api/plugins", s.handlePluginsList)
+	m.HandleFunc("/api/plugins/save", s.handlePluginSave)
+	m.HandleFunc("/api/plugins/toggle", s.handlePluginToggle)
+	m.HandleFunc("/api/plugins/delete", s.handlePluginDelete)
+	m.HandleFunc("/api/agent/info", s.handleAgentInfo)
+	m.HandleFunc("/api/agent/permission", s.handleAgentPermission)
 	m.HandleFunc("/api/integrations/status", s.handleIntegrations)
 	m.HandleFunc("/api/integrations/icc/inject", s.handleICCInject)
 	m.HandleFunc("/api/integrations/icc/eject", s.handleICCEject)

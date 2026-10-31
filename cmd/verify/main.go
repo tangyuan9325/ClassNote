@@ -10,10 +10,12 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
@@ -170,6 +172,165 @@ func main() {
 	}
 
 	fmt.Printf("ClassNote 自检 %s\n", c.base)
+	c.check("本地语音模型", func() (string, error) {
+		var d struct {
+			Items []struct {
+				ID     string `json:"id"`
+				OK     bool   `json:"ok"`
+				Detail string `json:"detail"`
+			} `json:"items"`
+		}
+		if err := c.getJSON("/api/env", &d); err != nil {
+			return "", err
+		}
+		for _, it := range d.Items {
+			if it.ID == "asr" {
+				if !it.OK {
+					return "", fmt.Errorf("%s", it.Detail)
+				}
+				return it.Detail, nil
+			}
+		}
+		return "", fmt.Errorf("环境探测里没有语音项")
+	})
+
+	c.check("语音转写链路", func() (string, error) {
+		// 用一段静音 WAV 走完整链路：本地 whisper 必须给出响应（哪怕是空文本）
+		wav := makeWAV(16000, 1) // 1 秒静音
+		body := &bytes.Buffer{}
+		mw := multipart.NewWriter(body)
+		fw, _ := mw.CreateFormFile("file", "test.wav")
+		_, _ = fw.Write(wav)
+		_ = mw.Close()
+		req, _ := http.NewRequest("POST", c.base+"/api/asr/test", body)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		if tok := ""; tok != "" {
+			req.Header.Set("X-ClassNote-Token", tok)
+		}
+		resp, err := c.client.Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		var out struct {
+			OK      bool   `json:"ok"`
+			Text    string `json:"text"`
+			Backend string `json:"backend"`
+			Error   string `json:"error"`
+		}
+		_ = json.Unmarshal(raw, &out)
+		if !out.OK {
+			return "", fmt.Errorf("%s", out.Error)
+		}
+		return out.Backend, nil
+	})
+
+	c.check("通知渠道配置", func() (string, error) {
+		var d struct {
+			Presets []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"presets"`
+		}
+		if err := c.getJSON("/api/notify/presets", &d); err != nil {
+			return "", err
+		}
+		if len(d.Presets) < 5 {
+			return "", fmt.Errorf("通知渠道模板只有 %d 个", len(d.Presets))
+		}
+		names := make([]string, 0, len(d.Presets))
+		for _, p := range d.Presets {
+			names = append(names, p.Name)
+		}
+		return strings.Join(names, " / "), nil
+	})
+
+	c.check("主题系统", func() (string, error) {
+		var d struct {
+			Builtins []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"builtins"`
+			Vars []string `json:"vars"`
+		}
+		if err := c.getJSON("/api/themes", &d); err != nil {
+			return "", err
+		}
+		if len(d.Builtins) < 4 {
+			return "", fmt.Errorf("内置主题只有 %d 个", len(d.Builtins))
+		}
+		// 保存一个临时主题再删掉，验证写路径
+		body := map[string]any{
+			"id": "verify-tmp", "name": "自检临时主题",
+			"vars": map[string]string{"bg": "#123456", "accent": "#abcdef"},
+		}
+		if err := c.postJSON("/api/themes/save", body, nil); err != nil {
+			return "", err
+		}
+		if err := c.postJSON("/api/themes/delete", map[string]string{"id": "verify-tmp"}, nil); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%d 个内置主题 · %d 个可自定义变量", len(d.Builtins), len(d.Vars)), nil
+	})
+
+	c.check("技能包与权限", func() (string, error) {
+		var d struct {
+			Skills []struct {
+				ID      string `json:"id"`
+				Name    string `json:"name"`
+				Enabled bool   `json:"enabled"`
+			} `json:"skills"`
+		}
+		if err := c.getJSON("/api/plugins", &d); err != nil {
+			return "", err
+		}
+		var a struct {
+			Permission string   `json:"permission"`
+			Tools      []string `json:"tools"`
+			Levels     []struct {
+				ID string `json:"id"`
+			} `json:"levels"`
+		}
+		if err := c.getJSON("/api/agent/info", &a); err != nil {
+			return "", err
+		}
+		if len(a.Levels) != 3 {
+			return "", fmt.Errorf("权限级别只有 %d 档", len(a.Levels))
+		}
+		n := 0
+		for _, sk := range d.Skills {
+			if sk.Enabled {
+				n++
+			}
+		}
+		return fmt.Sprintf("%d 个技能包（%d 个启用）· 权限 %s · 工具 %s",
+			len(d.Skills), n, a.Permission, strings.Join(a.Tools, "/")), nil
+	})
+
+	c.check("更新检查", func() (string, error) {
+		var d struct {
+			Checked   bool   `json:"checked"`
+			Current   string `json:"current"`
+			HasUpdate bool   `json:"hasUpdate"`
+			Latest    string `json:"latest"`
+			Error     string `json:"error"`
+		}
+		if err := c.getJSON("/api/update/check", &d); err != nil {
+			return "", err
+		}
+		if !d.Checked {
+			return "", fmt.Errorf("未完成检查")
+		}
+		if d.Error != "" {
+			return "当前版本 " + d.Current + " · " + d.Error, nil
+		}
+		if d.HasUpdate {
+			return fmt.Sprintf("发现新版本 %s（当前 %s）", d.Latest, d.Current), nil
+		}
+		return "已是最新 " + d.Current, nil
+	})
+
 	if *full {
 		fmt.Println("模式：完整（含大模型调用，耗时较长）")
 	} else {
@@ -680,6 +841,165 @@ func main() {
 		return fmt.Sprintf("%s 已就绪", boot.Status.Model), nil
 	})
 
+	c.check("本地语音模型", func() (string, error) {
+		var d struct {
+			Items []struct {
+				ID     string `json:"id"`
+				OK     bool   `json:"ok"`
+				Detail string `json:"detail"`
+			} `json:"items"`
+		}
+		if err := c.getJSON("/api/env", &d); err != nil {
+			return "", err
+		}
+		for _, it := range d.Items {
+			if it.ID == "asr" {
+				if !it.OK {
+					return "", fmt.Errorf("%s", it.Detail)
+				}
+				return it.Detail, nil
+			}
+		}
+		return "", fmt.Errorf("环境探测里没有语音项")
+	})
+
+	c.check("语音转写链路", func() (string, error) {
+		// 用一段静音 WAV 走完整链路：本地 whisper 必须给出响应（哪怕是空文本）
+		wav := makeWAV(16000, 1) // 1 秒静音
+		body := &bytes.Buffer{}
+		mw := multipart.NewWriter(body)
+		fw, _ := mw.CreateFormFile("file", "test.wav")
+		_, _ = fw.Write(wav)
+		_ = mw.Close()
+		req, _ := http.NewRequest("POST", c.base+"/api/asr/test", body)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		if tok := ""; tok != "" {
+			req.Header.Set("X-ClassNote-Token", tok)
+		}
+		resp, err := c.client.Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		var out struct {
+			OK      bool   `json:"ok"`
+			Text    string `json:"text"`
+			Backend string `json:"backend"`
+			Error   string `json:"error"`
+		}
+		_ = json.Unmarshal(raw, &out)
+		if !out.OK {
+			return "", fmt.Errorf("%s", out.Error)
+		}
+		return out.Backend, nil
+	})
+
+	c.check("通知渠道配置", func() (string, error) {
+		var d struct {
+			Presets []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"presets"`
+		}
+		if err := c.getJSON("/api/notify/presets", &d); err != nil {
+			return "", err
+		}
+		if len(d.Presets) < 5 {
+			return "", fmt.Errorf("通知渠道模板只有 %d 个", len(d.Presets))
+		}
+		names := make([]string, 0, len(d.Presets))
+		for _, p := range d.Presets {
+			names = append(names, p.Name)
+		}
+		return strings.Join(names, " / "), nil
+	})
+
+	c.check("主题系统", func() (string, error) {
+		var d struct {
+			Builtins []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"builtins"`
+			Vars []string `json:"vars"`
+		}
+		if err := c.getJSON("/api/themes", &d); err != nil {
+			return "", err
+		}
+		if len(d.Builtins) < 4 {
+			return "", fmt.Errorf("内置主题只有 %d 个", len(d.Builtins))
+		}
+		// 保存一个临时主题再删掉，验证写路径
+		body := map[string]any{
+			"id": "verify-tmp", "name": "自检临时主题",
+			"vars": map[string]string{"bg": "#123456", "accent": "#abcdef"},
+		}
+		if err := c.postJSON("/api/themes/save", body, nil); err != nil {
+			return "", err
+		}
+		if err := c.postJSON("/api/themes/delete", map[string]string{"id": "verify-tmp"}, nil); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%d 个内置主题 · %d 个可自定义变量", len(d.Builtins), len(d.Vars)), nil
+	})
+
+	c.check("技能包与权限", func() (string, error) {
+		var d struct {
+			Skills []struct {
+				ID      string `json:"id"`
+				Name    string `json:"name"`
+				Enabled bool   `json:"enabled"`
+			} `json:"skills"`
+		}
+		if err := c.getJSON("/api/plugins", &d); err != nil {
+			return "", err
+		}
+		var a struct {
+			Permission string   `json:"permission"`
+			Tools      []string `json:"tools"`
+			Levels     []struct {
+				ID string `json:"id"`
+			} `json:"levels"`
+		}
+		if err := c.getJSON("/api/agent/info", &a); err != nil {
+			return "", err
+		}
+		if len(a.Levels) != 3 {
+			return "", fmt.Errorf("权限级别只有 %d 档", len(a.Levels))
+		}
+		n := 0
+		for _, sk := range d.Skills {
+			if sk.Enabled {
+				n++
+			}
+		}
+		return fmt.Sprintf("%d 个技能包（%d 个启用）· 权限 %s · 工具 %s",
+			len(d.Skills), n, a.Permission, strings.Join(a.Tools, "/")), nil
+	})
+
+	c.check("更新检查", func() (string, error) {
+		var d struct {
+			Checked   bool   `json:"checked"`
+			Current   string `json:"current"`
+			HasUpdate bool   `json:"hasUpdate"`
+			Latest    string `json:"latest"`
+			Error     string `json:"error"`
+		}
+		if err := c.getJSON("/api/update/check", &d); err != nil {
+			return "", err
+		}
+		if !d.Checked {
+			return "", fmt.Errorf("未完成检查")
+		}
+		if d.Error != "" {
+			return "当前版本 " + d.Current + " · " + d.Error, nil
+		}
+		if d.HasUpdate {
+			return fmt.Sprintf("发现新版本 %s（当前 %s）", d.Latest, d.Current), nil
+		}
+		return "已是最新 " + d.Current, nil
+	})
+
 	if *full {
 		c.check("大模型问答", func() (string, error) {
 			t := time.Now()
@@ -771,6 +1091,27 @@ func waitRunning(base string, timeout time.Duration) (bool, string, error) {
 		}
 	}
 	return false, "", fmt.Errorf("等待开始超时")
+}
+
+// makeWAV 生成一段 16kHz 单声道 PCM16 WAV（静音），用于转写链路自检。
+func makeWAV(rate, sec int) []byte {
+	n := rate * sec
+	raw := make([]byte, n*2)
+	buf := bytes.NewBuffer(nil)
+	buf.WriteString("RIFF")
+	_ = binary.Write(buf, binary.LittleEndian, uint32(36+len(raw)))
+	buf.WriteString("WAVEfmt ")
+	_ = binary.Write(buf, binary.LittleEndian, uint32(16))
+	_ = binary.Write(buf, binary.LittleEndian, uint16(1))
+	_ = binary.Write(buf, binary.LittleEndian, uint16(1))
+	_ = binary.Write(buf, binary.LittleEndian, uint32(rate))
+	_ = binary.Write(buf, binary.LittleEndian, uint32(rate*2))
+	_ = binary.Write(buf, binary.LittleEndian, uint16(2))
+	_ = binary.Write(buf, binary.LittleEndian, uint16(16))
+	buf.WriteString("data")
+	_ = binary.Write(buf, binary.LittleEndian, uint32(len(raw)))
+	buf.Write(raw)
+	return buf.Bytes()
 }
 
 func portOf(base string) string {

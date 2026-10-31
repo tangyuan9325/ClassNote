@@ -27,6 +27,7 @@ import (
 	"classnote/internal/paths"
 	"classnote/internal/server"
 	"classnote/internal/store"
+	"classnote/internal/update"
 )
 
 //go:embed all:web
@@ -269,6 +270,31 @@ func main() {
 		_ = app.OpenExternal(url)
 	}
 
+	// 桌面悬浮球：常驻角落，显示课堂状态，点开主界面。
+	var ball *app.FloatBall
+	if cfg.UI.ShowFloatBall {
+		ball = app.NewFloatBall(app.FloatBallOptions{
+			OpenMain: func() { openUI("") },
+			OpenMenu: func() {
+				if tray != nil {
+					tray.Notify("课记", "右键托盘图标可以开始/结束记录")
+				}
+			},
+			Status: func() app.FloatBallStatus {
+				s := engine.Status()
+				return app.FloatBallStatus{
+					Running: s.Running, Subject: s.Subject,
+					Elapsed: s.ElapsedSec, Level: s.Level,
+				}
+			},
+		})
+		if err := ball.Start(); err != nil {
+			logx.Warnf("main", "悬浮球启动失败: %v", err)
+		} else {
+			logx.Infof("main", "桌面悬浮球已就绪")
+		}
+	}
+
 	// 托盘状态跟随引擎，事件变化时给出气泡提示。
 	go func() {
 		tick := time.NewTicker(2 * time.Second)
@@ -289,6 +315,9 @@ func main() {
 					wasRunning = s.Running
 					continue
 				}
+				if ball != nil {
+					ball.SetStatus(app.FloatBallStatus{Running: s.Running, Subject: s.Subject, Elapsed: s.ElapsedSec, Level: s.Level})
+				}
 				if s.Running != wasRunning {
 					wasRunning = s.Running
 					if tray == nil {
@@ -303,6 +332,22 @@ func main() {
 			}
 		}
 	}()
+
+	// 启动时检查更新（可选），有新版就用托盘提示。
+	if cfg.GitHub.CheckUpdates {
+		go func() {
+			time.Sleep(20 * time.Second) // 等网络与托盘就绪
+			info := update.Check(cfg.GitHub.Repo, cfg.GitHub.Token)
+			if info.HasUpdate {
+				logx.Infof("main", "发现新版本 %s（当前 %s）", info.Latest, info.Current)
+				if tray != nil {
+					tray.Notify("有新版本", fmt.Sprintf("ClassNote %s 可用（当前 %s），到 GitHub 下载", info.Latest, info.Current))
+				}
+			} else if info.Error != "" {
+				logx.Debugf("main", "更新检查：%s", info.Error)
+			}
+		}()
+	}
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)

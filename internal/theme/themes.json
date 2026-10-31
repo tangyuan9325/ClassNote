@@ -1,0 +1,52 @@
+{
+  "themes": [
+    {
+      "id": "ocean-night",
+      "name": "深海夜航",
+      "note": "深蓝底 / 冷青强调",
+      "author": "ClassNote 社区",
+      "swatch": "#3d7ea6",
+      "vars": {
+        "bg": "#0f1b26",
+        "bg-panel": "#152331",
+        "bg-side": "#101d29",
+        "bg-sunken": "#0c1720",
+        "ink": "#e7f0f6",
+        "ink-2": "#a8bccc",
+        "ink-3": "#6c8399",
+        "line": "#223344",
+        "line-strong": "#2e4457",
+        "accent": "#3d7ea6",
+        "accent-ink": "#7cc4e8",
+        "accent-soft": "#16293a",
+        "ok": "#5fae7c",
+        "warn": "#c9942f",
+        "danger": "#d4614f"
+      }
+    },
+    {
+      "id": "sakura-milk",
+      "name": "樱花奶盖",
+      "note": "浅粉底 / 樱花粉点缀",
+      "author": "ClassNote 社区",
+      "swatch": "#e0839b",
+      "vars": {
+        "bg": "#fff7f8",
+        "bg-panel": "#ffffff",
+        "bg-side": "#fdeef1",
+        "bg-sunken": "#fef2f4",
+        "ink": "#3d2a2e",
+        "ink-2": "#7a5a61",
+        "ink-3": "#b4909a",
+        "line": "#f2d7dd",
+        "line-strong": "#e8bcc6",
+        "accent": "#e0839b",
+        "accent-ink": "#c9647e",
+        "accent-soft": "#fbe4ea",
+        "ok": "#5f9e77",
+        "warn": "#c08b34",
+        "danger": "#c25549"
+      }
+    }
+  ]
+}

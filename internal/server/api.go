@@ -24,7 +24,10 @@ import (
 	"classnote/internal/llm"
 	"classnote/internal/logx"
 	"classnote/internal/notify"
+	"classnote/internal/plugin"
 	"classnote/internal/store"
+	"classnote/internal/theme"
+	"classnote/internal/update"
 )
 
 // Theme 是界面主题描述。
@@ -197,6 +200,28 @@ func (s *Server) handleEnv(w http.ResponseWriter, r *http.Request) {
 	}
 	var items []item
 
+	// 语音转写（本地 whisper 或云端）
+	asrMode := cfg.ASR.Mode
+	asrOK := false
+	asrDetail := "未启用"
+	asrHint := "可在设置里选择本地模型或云端接口"
+	if asrMode == "local" {
+		asrOK = cfg.ASR.LocalPort > 0 && asr.LocalHealth(cfg.ASR.LocalPort)
+		if asrOK {
+			asrDetail = fmt.Sprintf("本地 whisper.cpp 运行中（端口 %d，模型 %s）", cfg.ASR.LocalPort, filepath.Base(cfg.ASR.LocalModel))
+		} else {
+			asrDetail = "本地模型未运行"
+			asrHint = "首次启动会自动部署模型到 C:////ProgramData////ClassNote////whisper；也可用 scripts\\get-whisper.ps1 手动下载"
+		}
+	} else if asrMode == "api" && cfg.ASR.APIKey != "" {
+		asrOK = true
+		asrDetail = "云端接口 · " + cfg.ASR.Model
+	}
+	items = append(items, item{
+		ID: "asr", Name: "语音转写模型", OK: asrOK, Optional: false,
+		Detail: asrDetail, Hint: asrHint,
+	})
+
 	// InkCanvasForClass
 	icc := s.icc.State()
 	items = append(items, item{
@@ -271,13 +296,6 @@ func (s *Server) handleEnv(w http.ResponseWriter, r *http.Request) {
 	items = append(items, item{
 		ID: "model", Name: "AI 模型", OK: modelOK, Optional: false,
 		Detail: modelDetail, Hint: "可在设置中切换 API 或网页版",
-	})
-	// 语音转写
-	items = append(items, item{
-		ID: "asr", Name: "语音转写", OK: cfg.ASR.Mode != "off" && (cfg.ASR.BaseURL != "" || cfg.ASR.LocalExe != ""),
-		Optional: false,
-		Detail:   fmt.Sprintf("%s · %s", cfg.ASR.Mode, cfg.ASR.Model),
-		Hint:     "缺少密钥时可在设置中暂时关闭转写",
 	})
 	writeJSON(w, map[string]any{"items": items, "now": time.Now()})
 }
@@ -698,6 +716,190 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 // handleNotifyPresets 返回内置通知渠道模板。
 func (s *Server) handleNotifyPresets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"presets": notify.Presets()})
+}
+
+// handleUpdateCheck 检查 GitHub 上是否有新版本。
+func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	g := s.cfg.Get().GitHub
+	writeJSON(w, update.Check(g.Repo, g.Token))
+}
+
+// handleThemesList 列出内置与自定义主题。
+func (s *Server) handleThemesList(w http.ResponseWriter, r *http.Request) {
+	cfg := s.cfg.Get()
+	writeJSON(w, map[string]any{"builtins": theme.Builtins(), "custom": cfg.UI.CustomThemes, "vars": theme.Vars})
+}
+
+// handleThemeSave 保存/覆盖自定义主题。
+func (s *Server) handleThemeSave(w http.ResponseWriter, r *http.Request) {
+	var t config.CustomTheme
+	if err := readJSON(r, &t); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	cfg, err := s.cfg.Update(func(c *config.Config) error { return theme.Save(c, t) })
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "custom": cfg.UI.CustomThemes})
+}
+
+// handleThemeDelete 删除自定义主题。
+func (s *Server) handleThemeDelete(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := readJSON(r, &body); err != nil || body.ID == "" {
+		writeErr(w, 400, fmt.Errorf("缺少 id"))
+		return
+	}
+	cfg, _ := s.cfg.Update(func(c *config.Config) error {
+		theme.Delete(c, body.ID)
+		return nil
+	})
+	writeJSON(w, map[string]any{"ok": true, "custom": cfg.UI.CustomThemes})
+}
+
+// handleThemeExport 导出主题 JSON（分享用）。
+func (s *Server) handleThemeExport(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	t, ok := theme.Find(s.cfg.Get(), id)
+	if !ok {
+		writeErr(w, 404, fmt.Errorf("找不到主题 %s", id))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=classnote-theme-"+id+".json")
+	_, _ = w.Write(theme.ExportJSON(t))
+}
+
+// handleThemeImport 导入主题（市场或本地文件）。
+func (s *Server) handleThemeImport(w http.ResponseWriter, r *http.Request) {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	t, err := theme.ImportJSON(raw)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	cfg, err := s.cfg.Update(func(c *config.Config) error { return theme.Save(c, t) })
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "theme": t, "custom": cfg.UI.CustomThemes})
+}
+
+// handleThemeMarket 拉取主题市场清单。
+func (s *Server) handleThemeMarket(w http.ResponseWriter, r *http.Request) {
+	items, err := theme.Market(r.URL.Query().Get("url"))
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "themes": items})
+}
+
+// handlePluginsList 列出技能包。
+func (s *Server) handlePluginsList(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"skills": s.plugins.List(), "dir": s.plugins.Dir()})
+}
+
+// handlePluginSave 保存技能包。
+func (s *Server) handlePluginSave(w http.ResponseWriter, r *http.Request) {
+	var sk plugin.Skill
+	if err := readJSON(r, &sk); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	if err := s.plugins.Save(sk); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "skills": s.plugins.List()})
+}
+
+// handlePluginToggle 开关技能包。
+func (s *Server) handlePluginToggle(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID      string `json:"id"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := readJSON(r, &body); err != nil || body.ID == "" {
+		writeErr(w, 400, fmt.Errorf("缺少 id"))
+		return
+	}
+	if !s.plugins.SetEnabled(body.ID, body.Enabled) {
+		writeErr(w, 404, fmt.Errorf("找不到技能包 %s", body.ID))
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "skills": s.plugins.List()})
+}
+
+// handlePluginDelete 删除技能包。
+func (s *Server) handlePluginDelete(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := readJSON(r, &body); err != nil || body.ID == "" {
+		writeErr(w, 400, fmt.Errorf("缺少 id"))
+		return
+	}
+	if err := s.plugins.Delete(body.ID); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "skills": s.plugins.List()})
+}
+
+// handleAgentInfo 返回 Agent 权限与可用工具。
+func (s *Server) handleAgentInfo(w http.ResponseWriter, r *http.Request) {
+	cfg := s.cfg.Get()
+	writeJSON(w, map[string]any{
+		"permission": cfg.Agent.Permission,
+		"model":      cfg.Agent.Model,
+		"tools":      s.plugins.Tools(),
+		"skills":     len(s.plugins.Enabled()),
+		"levels": []map[string]string{
+			{"id": "all", "name": "全部访问", "note": "Agent 可直接使用全部本地能力，不再询问"},
+			{"id": "remind", "name": "敏感操作提醒", "note": "涉及写文件/执行命令时先提示（推荐）"},
+			{"id": "review", "name": "全部人工审查", "note": "每一步操作都要人工确认"},
+		},
+	})
+}
+
+// handleAgentPermission 修改 Agent 权限级别。
+func (s *Server) handleAgentPermission(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Permission string `json:"permission"`
+		Model      string `json:"model"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	if body.Permission != "" && body.Permission != "all" && body.Permission != "remind" && body.Permission != "review" {
+		writeErr(w, 400, fmt.Errorf("权限级别只能是 all / remind / review"))
+		return
+	}
+	cfg, err := s.cfg.Update(func(c *config.Config) error {
+		if body.Permission != "" {
+			c.Agent.Permission = body.Permission
+		}
+		if body.Model != "" {
+			c.Agent.Model = body.Model
+		}
+		return nil
+	})
+	if err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "permission": cfg.Agent.Permission, "model": cfg.Agent.Model})
 }
 
 func (s *Server) handleMicTest(w http.ResponseWriter, r *http.Request) {

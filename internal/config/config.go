@@ -26,7 +26,17 @@ type Config struct {
 	UI        UIConfig           `json:"ui"`
 	Server    ServerConfig       `json:"server"`
 	Notify    NotifyConfig       `json:"notify"`
+	GitHub    GitHubConfig       `json:"github"`
+	Agent     AgentConfig        `json:"agent"`
 	LastRun   time.Time          `json:"lastRun"`
+}
+
+// GitHubConfig 控制更新检查与仓库信息。
+type GitHubConfig struct {
+	// Repo 形如 "tangyuan9325/ClassNote"
+	Repo         string `json:"repo"`
+	Token        string `json:"token,omitempty"`
+	CheckUpdates bool   `json:"checkUpdates"`
 }
 
 // NotifyConfig 控制机器人通知。
@@ -157,12 +167,31 @@ type ICCConfig struct {
 }
 
 // UIConfig 描述界面偏好。
+type CustomTheme struct {
+	ID   string            `json:"id"`
+	Name string            `json:"name"`
+	Note string            `json:"note,omitempty"`
+	Vars map[string]string `json:"vars"`
+}
+
 type UIConfig struct {
-	Theme            string `json:"theme"` // claude | graphite | mist | forest
-	Accent           string `json:"accent"`
-	Density          string `json:"density"` // comfortable | compact
-	SidebarCollapsed bool   `json:"sidebarCollapsed"`
-	FontScale        int    `json:"fontScale"`
+	Theme            string        `json:"theme"` // claude | graphite | mist | forest 或自定义 ID
+	Accent           string        `json:"accent"`
+	Density          string        `json:"density"` // comfortable | compact
+	SidebarCollapsed bool          `json:"sidebarCollapsed"`
+	FontScale        int           `json:"fontScale"`
+	CustomThemes     []CustomTheme `json:"customThemes,omitempty"`
+	ShowFloatBall    bool          `json:"showFloatBall"`
+}
+
+// AgentConfig 控制本地 Agent 与技能包。
+type AgentConfig struct {
+	// Permission: all 全部访问 | remind 敏感操作提醒 | review 全部人工审查
+	Permission string `json:"permission"`
+	// Model 课堂助手使用的模型（空 = 跟随 provider）
+	Model string `json:"model"`
+	// SkillsDir 技能包目录（空 = 数据目录下的 plugins/skills）
+	SkillsDir string `json:"skillsDir"`
 }
 
 // Store 提供线程安全的配置访问与落盘。
@@ -294,6 +323,15 @@ func (c *Config) normalize() {
 	if c.Capture.JPEGQuality < 40 {
 		c.Capture.JPEGQuality = d.Capture.JPEGQuality
 	}
+	if c.Agent.Permission == "" {
+		c.Agent.Permission = "remind"
+	}
+	if c.Agent.Permission != "all" && c.Agent.Permission != "remind" && c.Agent.Permission != "review" {
+		c.Agent.Permission = "remind"
+	}
+	if c.GitHub.Repo == "" {
+		c.GitHub.Repo = "tangyuan9325/ClassNote"
+	}
 	if c.ASR.Mode == "" {
 		c.ASR.Mode = "local"
 	}
@@ -326,6 +364,10 @@ func (c *Config) normalize() {
 	}
 	if c.UI.Theme == "" {
 		c.UI.Theme = d.UI.Theme
+	}
+	if !c.UI.ShowFloatBall && c.UI.Theme != "" {
+		// 默认显示悬浮球（用户可在外观设置里关掉）
+		c.UI.ShowFloatBall = true
 	}
 	if c.UI.FontScale <= 0 {
 		c.UI.FontScale = 100

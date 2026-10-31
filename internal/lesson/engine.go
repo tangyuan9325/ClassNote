@@ -64,14 +64,15 @@ type segReq struct {
 
 // Engine 编排一整堂课。
 type Engine struct {
-	mu     sync.Mutex
-	cfg    config.Config
-	paths  paths.Paths
-	store  *store.Store
-	det    *capture.Detector
-	client llm.Client
-	asrCli *asr.Transcriber
-	emitFn func(Event)
+	mu          sync.Mutex
+	cfg         config.Config
+	paths       paths.Paths
+	store       *store.Store
+	det         *capture.Detector
+	client      llm.Client
+	asrCli      *asr.Transcriber
+	skillPrompt string
+	emitFn      func(Event)
 
 	sess      *store.Session
 	rec       *audio.Recorder
@@ -135,6 +136,13 @@ func (e *Engine) Update(cfg config.Config) {
 }
 
 // SetClient 更新模型客户端。
+// SetSkillPrompt 注入启用中的技能包提示（每次会变化，直接覆盖）。
+func (e *Engine) SetSkillPrompt(p string) {
+	e.mu.Lock()
+	e.skillPrompt = p
+	e.mu.Unlock()
+}
+
 func (e *Engine) SetClient(c llm.Client) {
 	e.mu.Lock()
 	e.client = c
@@ -831,7 +839,10 @@ func (e *Engine) analyze(segID string) {
 
 	e.emit("segment_status", map[string]any{"segmentId": segID, "status": "analyzing"})
 
-	prompt := analysisUser(subject, slideIndex, duration, boardText, transcript, prevSummary)
+	e.mu.Lock()
+	skill := e.skillPrompt
+	e.mu.Unlock()
+	prompt := analysisUser(subject, slideIndex, duration, boardText, transcript, prevSummary) + skill
 	msgs := []llm.Message{llm.TextMessage(llm.RoleSystem, analysisSystem)}
 	usedImage := false
 	if imageFile != "" && vision {
