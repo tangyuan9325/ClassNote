@@ -135,6 +135,36 @@ func fetchWS(base string) string {
 	return v.WS
 }
 
+// killByPort 强制结束监听指定 TCP 端口的进程（Windows）。
+// 用于清理复用失败的残留浏览器：它们没有 Cmd 句柄，只能按端口找到 PID 再结束。
+func killByPort(port int) {
+	if port <= 0 {
+		return
+	}
+	out, err := exec.Command("netstat", "-ano", "-p", "tcp").Output()
+	if err != nil {
+		return
+	}
+	needle := fmt.Sprintf(":%d", port)
+	pid := ""
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(strings.TrimSpace(line))
+		if len(f) < 5 || !strings.EqualFold(f[3], "LISTENING") {
+			continue
+		}
+		// 本地地址形如 127.0.0.1:9353
+		if !strings.HasSuffix(f[1], needle) {
+			continue
+		}
+		pid = f[len(f)-1]
+		break
+	}
+	if pid == "" {
+		return
+	}
+	_ = exec.Command("taskkill", "/F", "/PID", pid).Run()
+}
+
 // BrowserBinary 返回可用浏览器路径（导出给界面展示）。
 func BrowserBinary() string { return findBrowser() }
 

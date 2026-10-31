@@ -331,6 +331,53 @@ func main() {
 		return "已是最新 " + d.Current, nil
 	})
 
+	c.check("市场与一键更新", func() (string, error) {
+		var m struct {
+			OK     bool `json:"ok"`
+			Skills []struct {
+				ID     string `json:"id"`
+				Prompt string `json:"prompt"`
+			} `json:"skills"`
+			Error string `json:"error"`
+		}
+		if err := c.getJSON("/api/plugins/market", &m); err != nil {
+			return "", err
+		}
+		if !m.OK {
+			return "", fmt.Errorf("技能包市场: %s", m.Error)
+		}
+		if len(m.Skills) == 0 {
+			return "", fmt.Errorf("技能包市场为空")
+		}
+		return fmt.Sprintf("技能包市场 %d 项 · 一键更新接口就绪", len(m.Skills)), nil
+	})
+
+	c.check("通知渠道扩展", func() (string, error) {
+		var d struct {
+			Presets []struct {
+				ID string `json:"id"`
+			} `json:"presets"`
+		}
+		if err := c.getJSON("/api/notify/presets", &d); err != nil {
+			return "", err
+		}
+		want := []string{"discord", "slack", "bark", "pushplus", "ntfy", "gotify"}
+		got := map[string]bool{}
+		for _, p := range d.Presets {
+			got[p.ID] = true
+		}
+		var missing []string
+		for _, k := range want {
+			if !got[k] {
+				missing = append(missing, k)
+			}
+		}
+		if len(missing) > 0 {
+			return "", fmt.Errorf("缺少渠道: %s", strings.Join(missing, ","))
+		}
+		return fmt.Sprintf("%d 个快速添加渠道", len(d.Presets)), nil
+	})
+
 	if *full {
 		fmt.Println("模式：完整（含大模型调用，耗时较长）")
 	} else {
@@ -998,6 +1045,49 @@ func main() {
 			return fmt.Sprintf("发现新版本 %s（当前 %s）", d.Latest, d.Current), nil
 		}
 		return "已是最新 " + d.Current, nil
+	})
+
+	c.check("市场与一键更新", func() (string, error) {
+		var m struct {
+			OK     bool `json:"ok"`
+			Skills []struct {
+				ID string `json:"id"`
+			} `json:"skills"`
+			Error string `json:"error"`
+		}
+		if err := c.getJSON("/api/plugins/market", &m); err != nil {
+			return "", err
+		}
+		if !m.OK || len(m.Skills) == 0 {
+			return "", fmt.Errorf("技能包市场异常: %s", m.Error)
+		}
+		return fmt.Sprintf("技能包市场 %d 项 · 一键更新接口就绪", len(m.Skills)), nil
+	})
+
+	c.check("通知渠道扩展", func() (string, error) {
+		var d struct {
+			Presets []struct {
+				ID string `json:"id"`
+			} `json:"presets"`
+		}
+		if err := c.getJSON("/api/notify/presets", &d); err != nil {
+			return "", err
+		}
+		want := []string{"discord", "slack", "bark", "pushplus", "ntfy", "gotify"}
+		got := map[string]bool{}
+		for _, p := range d.Presets {
+			got[p.ID] = true
+		}
+		var missing []string
+		for _, k := range want {
+			if !got[k] {
+				missing = append(missing, k)
+			}
+		}
+		if len(missing) > 0 {
+			return "", fmt.Errorf("缺少渠道: %s", strings.Join(missing, ","))
+		}
+		return fmt.Sprintf("%d 个快速添加渠道", len(d.Presets)), nil
 	})
 
 	if *full {

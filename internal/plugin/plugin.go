@@ -15,14 +15,21 @@
 package plugin
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
+
+//go:embed skills.json
+var bundledSkills []byte
 
 // Skill 是一个技能包。
 type Skill struct {
@@ -205,4 +212,78 @@ func (r *Registry) seed() {
 		_ = os.WriteFile(filepath.Join(r.dir, s.ID+".json"), raw, 0o644)
 	}
 	r.reload()
+}
+
+// MarketItem 是技能包市场里的一条。
+type MarketItem struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Prompt      string   `json:"prompt"`
+	Tools       []string `json:"tools,omitempty"`
+	Author      string   `json:"author,omitempty"`
+	URL         string   `json:"url,omitempty"`
+}
+
+var marketCli = &http.Client{Timeout: 15 * time.Second}
+
+// Market 从远端清单拉取技能包市场条目（离线回退到随包清单）。
+func Market(registry string) ([]MarketItem, error) {
+	if registry == "" {
+		registry = "https://raw.githubusercontent.com/tangyuan9325/ClassNote/main/skills.json"
+	}
+	req, err := http.NewRequest("GET", registry, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "ClassNote")
+	resp, err := marketCli.Do(req)
+	if err != nil {
+		return parseSkillMarket(bundledSkills)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if resp.StatusCode >= 400 {
+		return parseSkillMarket(bundledSkills)
+	}
+	if items, err := parseSkillMarket(raw); err == nil && len(items) > 0 {
+		return items, nil
+	}
+	return parseSkillMarket(bundledSkills)
+}
+
+func parseSkillMarket(raw []byte) ([]MarketItem, error) {
+	var w struct {
+		Skills []MarketItem `json:"skills"`
+	}
+	if err := json.Unmarshal(raw, &w); err == nil && len(w.Skills) > 0 {
+		return w.Skills, nil
+	}
+	var arr []MarketItem
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		return arr, nil
+	}
+	return nil, fmt.Errorf("技能包市场格式不正确")
+}
+
+// Install 从市场条目安装技能包（写入本地，返回安装后的技能包）。
+func (r *Registry) Install(m MarketItem) (Skill, error) {
+	s := Skill{
+		ID: m.ID, Name: m.Name, Description: m.Description,
+		Prompt: m.Prompt, Tools: m.Tools, Author: m.Author, Enabled: true,
+	}
+	if err := r.Save(s); err != nil {
+		return Skill{}, err
+	}
+	return s, nil
+}
+
+// Has 判断技能包是否已安装。
+func (r *Registry) Has(id string) bool {
+	for _, s := range r.List() {
+		if s.ID == id {
+			return true
+		}
+	}
+	return false
 }

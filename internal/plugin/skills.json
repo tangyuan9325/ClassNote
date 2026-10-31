@@ -1,0 +1,84 @@
+{
+  "skills": [
+    {
+      "id": "text-close-reading",
+      "name": "文本细读",
+      "description": "语文课：从关键词句切入，讲清表达效果",
+      "prompt": "分析课文时先抓关键词句，再讲它的表达效果与情感，避免泛泛而谈。",
+      "tools": ["notes", "capture"],
+      "author": "ClassNote 内置"
+    },
+    {
+      "id": "formula-derivation",
+      "name": "公式推导",
+      "description": "理科课：把公式推导过程拆成一步步可跟的链条",
+      "prompt": "涉及公式时写出推导链条：已知 → 变形 → 代入 → 结论，每步给一句依据。",
+      "tools": ["notes"],
+      "author": "ClassNote 内置"
+    },
+    {
+      "id": "exam-point-tag",
+      "name": "考点标注",
+      "description": "把当页内容标注到常见考点/题型",
+      "prompt": "每页笔记末尾补一行「考点」，指出它常考的题型与易错点。",
+      "tools": ["notes", "report"],
+      "author": "ClassNote 内置"
+    },
+    {
+      "id": "moral-story",
+      "name": "立意小结",
+      "description": "语文/班会课：结尾提炼本课立意与现实启示",
+      "prompt": "课堂结束前用两三句话提炼这堂课的立意，并给出一个能带进生活的启示。",
+      "tools": ["notes", "report"],
+      "author": "ClassNote 社区"
+    },
+    {
+      "id": "experiment-steps",
+      "name": "实验步骤",
+      "description": "理化生实验课：按目的/器材/步骤/结论梳理",
+      "prompt": "实验相关内容按「实验目的 → 器材 → 步骤 → 现象 → 结论」五栏整理，注意标注安全事项。",
+      "tools": ["notes"],
+      "author": "ClassNote 社区"
+    },
+    {
+      "id": "english-syntax",
+      "name": "长难句拆解",
+      "description": "英语课：把长难句拆成主干与修饰成分",
+      "prompt": "遇到英语长难句时先找主干（主谓宾），再把定语从句、状语等修饰成分标出来并翻译。",
+      "tools": ["notes"],
+      "author": "ClassNote 社区"
+    },
+    {
+      "id": "timeline-events",
+      "name": "时间线梳理",
+      "description": "历史课：把事件排成时间线并标注因果",
+      "prompt": "历史事件按时间线排列，相邻事件之间用箭头标出因果或转折关系。",
+      "tools": ["notes", "report"],
+      "author": "ClassNote 社区"
+    },
+    {
+      "id": "map-location",
+      "name": "地理定位",
+      "description": "地理课：每页标注关键地名与位置关系",
+      "prompt": "地理知识点标注关键地名、方位与相对位置（如『位于 X 以北』），避免只罗列名词。",
+      "tools": ["notes"],
+      "author": "ClassNote 社区"
+    },
+    {
+      "id": "homework-detective",
+      "name": "作业侦探",
+      "description": "下课前汇总老师口头布置的作业与截止时间",
+      "prompt": "留意转写中老师提到的作业、练习、截止时间，课堂结尾单独汇总成「今日作业」清单；没提到就不写。",
+      "tools": ["report"],
+      "author": "ClassNote 社区"
+    },
+    {
+      "id": "question-log",
+      "name": "课堂提问记录",
+      "description": "把老师的课堂提问与典型回答记下来",
+      "prompt": "转写中出现的课堂提问单独记录：问题、谁回答的、回答要点，用于课后复盘。",
+      "tools": ["notes", "report"],
+      "author": "ClassNote 社区"
+    }
+  ]
+}

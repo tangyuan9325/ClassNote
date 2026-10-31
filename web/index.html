@@ -53,6 +53,10 @@
     </div>
 
     <div class="side-footer">
+      <button class="ghost-btn" id="btn-market" title="主题与技能包市场">
+        <svg viewBox="0 0 24 24"><path d="M4 9h16l-1.2 10.2a1.5 1.5 0 0 1-1.5 1.3H6.7a1.5 1.5 0 0 1-1.5-1.3L4 9Z" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linejoin="round"/><path d="M8 9V6.5A4 4 0 0 1 16 6.5V9" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round"/></svg>
+        市场
+      </button>
       <button class="ghost-btn" id="btn-theme" title="切换主题">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2" stroke="currentColor" stroke-width="1.7" fill="none"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6l1.4 1.4m10 10 1.4 1.4m0-12.8-1.4 1.4m-10 10L5.6 18.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
         <span id="theme-name">羊皮纸</span>
@@ -133,9 +137,13 @@
     </div>
 
     <footer class="composer-wrap">
+      <div class="agent-head">
+        <span class="eyebrow">Agent 对话</span>
+        <span class="hint" id="agent-hint">结合当前课堂内容回答，记录保存在这节课里</span>
+      </div>
       <div class="chat-thread" id="chat-thread"></div>
       <div class="composer">
-        <textarea id="ask-input" rows="1" placeholder="就这堂课提问，比如：这页的重点是什么？老师讲清楚了吗？"></textarea>
+        <textarea id="ask-input" rows="1" placeholder="向 Agent 提问，比如：这页的重点是什么？老师讲清楚了吗？"></textarea>
         <button class="send-btn" id="btn-ask" title="发送">
           <svg viewBox="0 0 24 24"><path d="M4 12h14m0 0-5-5m5 5-5 5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
         </button>
@@ -309,6 +317,22 @@
   </div>
   <div class="ob-foot">本地运行 · 数据只保存在这台电脑</div>
 </div>
+
+<!-- ============ 市场（主题 + 技能包） ============ -->
+<div class="drawer-mask" id="market-mask" hidden></div>
+<aside class="drawer wide" id="market" hidden>
+  <header class="drawer-head">
+    <h2>市场</h2>
+    <button class="icon-btn" id="market-close">
+      <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </button>
+  </header>
+  <div class="drawer-tabs" id="market-tabs">
+    <button class="active" data-tab="themes">主题市场</button>
+    <button data-tab="skills">技能包市场</button>
+  </div>
+  <div class="drawer-body" id="market-body"></div>
+</aside>
 
 <!-- ============ 设置抽屉 ============ -->
 <div class="drawer-mask" id="drawer-mask" hidden></div>

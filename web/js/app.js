@@ -3,6 +3,7 @@ import { applyTheme as applyThemeVars, themeLabel } from './theme.js';
 import { $, $$, el, toast, esc, md, fmtTime, fmtDate, fmtDur } from './util.js';
 import { startOnboarding } from './onboarding.js';
 import { openSettings } from './settings.js';
+import { openMarket } from './market.js';
 
 export const S = {
   boot: null,
@@ -350,17 +351,44 @@ function renderStats(session) {
 function renderChat(session) {
   const box = $('#insp-chat');
   const msgs = session.messages || [];
-  if (!msgs.length) { box.innerHTML = '<div class="side-empty">还没有提问</div>'; return; }
-  box.innerHTML = '';
+  if (!msgs.length) { box.innerHTML = '<div class="side-empty">还没有提问</div>'; }
+  else {
+    box.innerHTML = '';
+    for (let i = 0; i < msgs.length; i += 2) {
+      const q = msgs[i];
+      const a = msgs[i + 1];
+      if (!q) continue;
+      const qa = el('div', { class: 'qa' });
+      qa.append(el('div', { class: 'q', text: q.content }));
+      if (a) qa.append(el('div', { class: 'a', html: md(a.content) }));
+      box.append(qa);
+    }
+  }
+  // 主页面底部 Agent 对话框同步历史消息
+  renderAgentThread(session);
+}
+
+// renderAgentThread 把本课已保存的 Agent 对话渲染到底部对话框。
+// ask() 过程中的临时气泡以 [data-tmp] 标记，重建时保留。
+function renderAgentThread(session) {
+  const thread = $('#chat-thread');
+  if (!thread) return;
+  const saved = [];
+  for (const n of thread.children) {
+    if (n.dataset.tmp === '1') saved.push(n);
+  }
+  thread.innerHTML = '';
+  const msgs = session.messages || [];
   for (let i = 0; i < msgs.length; i += 2) {
     const q = msgs[i];
     const a = msgs[i + 1];
     if (!q) continue;
-    const qa = el('div', { class: 'qa' });
-    qa.append(el('div', { class: 'q', text: q.content }));
-    if (a) qa.append(el('div', { class: 'a', html: md(a.content) }));
-    box.append(qa);
+    const qb = el('div', { class: 'bubble user', text: q.content });
+    thread.append(qb);
+    if (a) thread.append(el('div', { class: 'bubble assistant', html: md(a.content) }));
   }
+  for (const n of saved) thread.append(n);
+  thread.scrollTop = thread.scrollHeight;
 }
 
 function renderSlideEvent(data) {
@@ -442,6 +470,8 @@ async function ask() {
   try {
     const d = await api.post('/api/lesson/ask', { question: q });
     thinking.innerHTML = md(d.answer);
+    // 回答已入库，清掉临时气泡后整体重建（避免与持久化消息重复）
+    $$('#chat-thread [data-tmp]').forEach((n) => n.remove());
     refreshLiveSession();
   } catch (e) {
     thinking.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`;
@@ -454,7 +484,7 @@ async function ask() {
 
 function addBubble(role, text) {
   const thread = $('#chat-thread');
-  const b = el('div', { class: 'bubble ' + role });
+  const b = el('div', { class: 'bubble ' + role, dataset: { tmp: '1' } });
   if (role === 'assistant') b.innerHTML = md(text); else b.textContent = text;
   thread.append(b);
   thread.scrollTop = thread.scrollHeight;
@@ -502,6 +532,38 @@ function renderHistory(items) {
       el('div', { class: 'h-foot', text: s.hasReport ? '查看报告 →' : '查看记录 →' }),
     ]);
     card.addEventListener('click', () => openSession(s.id));
+    // Agent 对话记录：默认折叠，点击展开
+    const chatBox = el('div', { class: 'hist-chat' });
+    const toggle = el('button', { class: 'hist-chat-toggle' }, '▸ Agent 对话记录');
+    const list = el('div', { class: 'hist-chat-list', hidden: true });
+    chatBox.append(toggle, list);
+    toggle.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!list.hidden) { list.hidden = true; toggle.textContent = '▸ Agent 对话记录'; return; }
+      toggle.textContent = '▾ Agent 对话记录';
+      list.hidden = false;
+      if (!list.dataset.loaded) {
+        list.innerHTML = '<div class="side-empty">加载中…</div>';
+        try {
+          const d = await api.get(`/api/session?id=${encodeURIComponent(s.id)}`);
+          const msgs = d.session?.messages || [];
+          list.innerHTML = '';
+          if (!msgs.length) {
+            list.innerHTML = '<div class="side-empty">这节课没有对话</div>';
+          } else {
+            for (let i = 0; i < msgs.length; i += 2) {
+              const q = msgs[i], a = msgs[i + 1];
+              if (q) list.append(el('div', { class: 'q', text: q.content }));
+              if (a) list.append(el('div', { class: 'a', html: md(a.content) }));
+            }
+          }
+          list.dataset.loaded = '1';
+        } catch (err) {
+          list.innerHTML = `<div class="side-empty">${esc(err.message)}</div>`;
+        }
+      }
+    });
+    card.append(chatBox);
     grid.append(card);
   }
 }
@@ -679,6 +741,7 @@ function bindGlobal() {
   $('#btn-report').addEventListener('click', makeReport);
   $('#btn-ask').addEventListener('click', ask);
   $('#btn-settings').addEventListener('click', () => openSettings(S));
+  $('#btn-market').addEventListener('click', () => openMarket(S));
   $('#btn-theme').addEventListener('click', cycleTheme);
   $('#btn-zoom').addEventListener('click', () => { const i = $('#slide-img'); if (i.src) openLightbox(i.src); });
   $('#btn-utterance')?.addEventListener('click', async () => {

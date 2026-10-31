@@ -21,6 +21,8 @@ export function openSettings(state) {
 function close() {
   $('#drawer').hidden = true;
   $('#drawer-mask').hidden = true;
+  // 关闭时丢弃取色预览，还原真实主题
+  if (S?.cfg?.ui?.theme) applyTheme(S.cfg.ui.theme, S.cfg.ui.customThemes);
 }
 
 function bind() {
@@ -47,6 +49,18 @@ async function save() {
     toast('设置已保存', 'ok');
   } catch (e) {
     toast('保存失败：' + e.message, 'err');
+  }
+}
+
+// 保存配置（不弹提示），与 app.js 的同名函数等价——本模块自持，避免循环依赖。
+async function saveConfig(silent = false) {
+  try {
+    const d = await api.post('/api/config', S.cfg);
+    S.cfg = d.config.config;
+    return true;
+  } catch (e) {
+    if (!silent) toast('保存失败：' + e.message, 'err');
+    return false;
   }
 }
 
@@ -240,38 +254,46 @@ function appearTab(cfg) {
       <i style="background:${esc((t.vars || {}).accent || '#888')}"></i><i style="background:${esc((t.vars || {}).line || '#ddd')}"></i></div>
       <b>${esc(t.name)}</b><span>自定义</span>
     </button>`).join('');
+  // 取色器：编辑中主题的当前值（优先载入正编辑的自定义主题，否则给一组协调的默认色）
+  const edit = S.editTheme || (S.editTheme = {
+    id: 'my-theme', name: '自定义主题',
+    vars: { bg: '#faf9f5', 'bg-panel': '#ffffff', ink: '#29261f', 'ink-2': '#6f675c', line: '#e3ddd1', accent: '#c96442' },
+  });
+  const C = (k, label) => `
+    <div class="color-cell">
+      <span>${label}</span>
+      <input type="color" data-ck="${k}" value="${esc(edit.vars[k] || '#ffffff')}">
+      <input class="color-hex" data-ck="${k}" value="${esc(edit.vars[k] || '#ffffff')}" spellcheck="false">
+    </div>`;
   return `
     <h3>主题</h3>
     <div class="desc">界面同时适用于本地窗口与浏览器访问，切换后立即生效。</div>
     <div class="theme-grid">${cards}${customCards}</div>
 
     <h3>自定义主题</h3>
-    <div class="desc">选一个基础主题，改动颜色后保存成你自己的主题；也可以导出分享给别人。</div>
-    <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
-      <label class="field" style="flex:1;min-width:150px"><span>主题名称</span>
-        <input id="ct-name" placeholder="例如：深夜备课"></label>
-      <label class="field" style="flex:1;min-width:150px"><span>主题 ID</span>
-        <input id="ct-id" placeholder="my-theme"></label>
+    <div class="theme-editor">
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <label class="field" style="flex:1;min-width:150px;margin-bottom:0"><span>主题名称</span>
+          <input id="ct-name" value="${esc(edit.name)}" placeholder="例如：深夜备课"></label>
+        <label class="field" style="flex:1;min-width:150px;margin-bottom:0"><span>主题 ID</span>
+          <input id="ct-id" value="${esc(edit.id)}" placeholder="my-theme"></label>
+      </div>
+      <div class="color-grid">
+        ${C('bg', '背景')}${C('bg-panel', '面板')}${C('ink', '正文')}${C('ink-2', '次要')}${C('line', '边线')}${C('accent', '强调')}
+      </div>
+      <div class="theme-preview" id="ct-preview">
+        <i style="background:${esc(edit.vars.bg)}"></i><i style="background:${esc(edit.vars['bg-panel'])}"></i>
+        <i style="background:${esc(edit.vars.ink)}"></i><i style="background:${esc(edit.vars.accent)}"></i>
+      </div>
+      <div class="row" style="gap:8px;margin-top:10px">
+        <button class="btn small primary" id="ct-save">保存并应用</button>
+        <button class="btn small" id="ct-export">导出 JSON</button>
+        <button class="btn small" id="ct-import">导入 JSON</button>
+        <input type="file" id="ct-file" accept="application/json" hidden>
+        <span class="hint" id="ct-result"></span>
+      </div>
+      <div class="desc" style="margin-top:8px">改动颜色会立即预览；保存后可在上方主题列表选用。主题市场在侧栏「市场」页。</div>
     </div>
-    <div class="row" style="gap:10px;flex-wrap:wrap">
-      ${[['bg','背景'],['bg-panel','面板'],['ink','正文'],['ink-2','次要文字'],['line','边线'],['accent','强调色']].map(([k, label]) => `
-        <label class="field" style="width:120px"><span>${label}</span>
-          <input type="color" id="ct-${k}" value="${esc((cfg.ui.customThemes && cfg.ui.customThemes[0] && cfg.ui.customThemes[0].vars && cfg.ui.customThemes[0].vars[k]) || '#ffffff')}"></label>`).join('')}
-    </div>
-    <div class="row" style="gap:8px;margin-top:10px">
-      <button class="btn small" id="ct-save">保存主题</button>
-      <button class="btn small" id="ct-export">导出当前</button>
-      <button class="btn small" id="ct-import">导入 JSON</button>
-      <input type="file" id="ct-file" accept="application/json" hidden>
-      <span class="hint" id="ct-result"></span>
-    </div>
-
-    <h3>主题市场</h3>
-    <div class="row" style="gap:8px;align-items:center">
-      <button class="btn small" id="ct-market">刷新市场</button>
-      <span class="hint">来自社区分享的主题清单</span>
-    </div>
-    <div id="ct-market-list" class="theme-grid" style="margin-top:8px"></div>
 
     <h3>显示</h3>
     <label class="field"><span>信息密度</span>
@@ -346,46 +368,69 @@ function copy(text) {
   navigator.clipboard?.writeText(text).then(() => toast('已复制', 'ok'), () => toast('复制失败', 'err'));
 }
 
+const NOTIFY_TYPES = {
+  wecom: '企业微信', dingtalk: '钉钉', feishu: '飞书', telegram: 'Telegram',
+  serverchan: 'Server酱', discord: 'Discord', slack: 'Slack', bark: 'Bark',
+  pushplus: 'PushPlus', ntfy: 'ntfy', gotify: 'Gotify', webhook: '自定义',
+};
+
 function notifyTab(cfg) {
   const nc = cfg.notify || (cfg.notify = { enabled: false, providers: [] });
   const presets = (S.boot.notifyPresets || []);
-  const rows = (nc.providers || []).map((p, i) => `
-    <div class="card" style="margin-bottom:10px">
-      <div class="row" style="gap:8px;align-items:center">
-        <input class="np-name" data-i="${i}" value="${esc(p.name || '')}" placeholder="名称" style="flex:1">
-        <select class="np-type" data-i="${i}" style="width:150px">
-          ${['wecom','dingtalk','feishu','telegram','serverchan','webhook'].map((t) => `<option value="${t}" ${p.type === t ? 'selected' : ''}>${({wecom:'企业微信',dingtalk:'钉钉',feishu:'飞书',telegram:'Telegram',serverchan:'Server酱',webhook:'自定义'})[t]}</option>`).join('')}
+  const rows = (nc.providers || []).map((p, i) => {
+    const t = p.type || 'webhook';
+    const needWebhook = ['wecom', 'dingtalk', 'feishu', 'discord', 'slack', 'ntfy', 'gotify', 'webhook'].includes(t);
+    const needSecret = ['wecom', 'dingtalk'].includes(t);
+    const needToken = ['telegram', 'serverchan', 'bark', 'pushplus', 'gotify'].includes(t);
+    const needChat = t === 'telegram';
+    return `
+    <div class="card np-card" data-i="${i}">
+      <div class="np-head">
+        <label class="switch"><input type="checkbox" class="np-enabled" data-i="${i}" ${p.enabled ? 'checked' : ''}><i></i></label>
+        <input class="np-name" data-i="${i}" value="${esc(p.name || '')}" placeholder="渠道名称" style="flex:1">
+        <select class="np-type" data-i="${i}">
+          ${Object.entries(NOTIFY_TYPES).map(([k, v]) => `<option value="${k}" ${t === k ? 'selected' : ''}>${v}</option>`).join('')}
         </select>
-        <label class="switch"><input type="checkbox" class="np-enabled" data-i="${i}" ${p.enabled ? 'checked' : ''}><span>启用</span></label>
         <button class="btn small danger np-del" data-i="${i}">删除</button>
       </div>
-      <div class="row" style="gap:8px;margin-top:8px">
-        <input class="np-webhook" data-i="${i}" value="${esc(p.webhook || '')}" placeholder="Webhook 地址" style="flex:2">
-        <input class="np-secret" data-i="${i}" value="${esc(p.secret || '')}" placeholder="加签密钥（可选）" style="flex:1">
+      <div class="np-fields">
+        ${needWebhook ? `<label class="np-field"><span>${t === 'ntfy' ? '主题地址' : t === 'gotify' ? '服务器地址' : 'Webhook'}</span>
+          <input class="np-webhook" data-i="${i}" value="${esc(p.webhook || '')}" placeholder="${t === 'ntfy' ? 'https://ntfy.sh/my-topic' : 'https://…'}"></label>` : ''}
+        ${needSecret ? `<label class="np-field"><span>加签密钥（可选）</span>
+          <input class="np-secret" data-i="${i}" value="${esc(p.secret || '')}" placeholder="加签模式的密钥"></label>` : ''}
+        ${needToken ? `<label class="np-field"><span>${t === 'bark' ? 'DeviceKey' : t === 'pushplus' ? 'Token' : t === 'gotify' ? 'App Token' : 'Token / SendKey'}</span>
+          <input class="np-token" data-i="${i}" value="${esc(p.token || '')}" placeholder="…"></label>` : ''}
+        ${needChat ? `<label class="np-field"><span>ChatID</span>
+          <input class="np-chat" data-i="${i}" value="${esc(p.chatId || '')}" placeholder="Telegram ChatID"></label>` : ''}
       </div>
-      <div class="row" style="gap:8px;margin-top:6px">
-        <input class="np-token" data-i="${i}" value="${esc(p.token || '')}" placeholder="Token / SendKey（Telegram / Server酱）" style="flex:1">
-        <input class="np-chat" data-i="${i}" value="${esc(p.chatId || '')}" placeholder="ChatID（Telegram）" style="width:180px">
-      </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   return `
     <h3>机器人通知</h3>
-    <div class="field">
-      <label class="switch"><input type="checkbox" id="np-master" ${nc.enabled ? 'checked' : ''}><span>启用通知</span></label>
-      <div class="desc">课堂开始、下课、报告生成时推送到群里。事件可按渠道分别订阅。</div>
-    </div>
-    <div class="field">
-      <label>快速添加</label>
-      <div class="seg" id="np-presets">
-        ${presets.map((p) => `<button data-preset="${esc(p.id)}">${esc(p.name)}</button>`).join('')}
+    <div class="np-master">
+      <label class="switch"><input type="checkbox" id="np-master" ${nc.enabled ? 'checked' : ''}><i></i></label>
+      <div>
+        <div class="label">启用通知</div>
+        <div class="sub">课堂开始、下课、报告生成时推送到群里</div>
       </div>
     </div>
+
+    <h3>快速添加</h3>
+    <input id="np-search" placeholder="搜索渠道，如：微信 / 推送 / iOS…" style="width:100%;margin-bottom:8px">
+    <div class="np-presets" id="np-presets">
+      ${presets.map((p) => `
+        <button class="np-preset" data-preset="${esc(p.id)}" title="${esc(p.hint || '')}">
+          <b>${esc(p.name)}</b><span>${esc(p.hint || '')}</span>
+        </button>`).join('')}
+    </div>
+
+    <h3>已添加渠道</h3>
     <div id="np-list">${rows || '<div class="desc">还没有通知渠道，点上方按钮添加。</div>'}</div>
+
     <div class="row" style="gap:8px;margin-top:12px">
       <button class="btn" id="np-test">发送测试消息</button>
       <span class="hint" id="np-test-result"></span>
-    </div>
-  `;
+    </div>`;
 }
 
 function bindNotify() {
@@ -395,12 +440,20 @@ function bindNotify() {
     nc.enabled = e.target.checked;
     saveConfig();
   });
-  $$('#np-presets button').forEach((b) => b.addEventListener('click', () => {
+  // 快速添加：搜索过滤
+  $('#np-search')?.addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    $$('#np-presets .np-preset').forEach((b) => {
+      const hit = !q || b.textContent.toLowerCase().includes(q);
+      b.style.display = hit ? '' : 'none';
+    });
+  });
+  $$('#np-presets .np-preset').forEach((b) => b.addEventListener('click', () => {
     const id = b.dataset.preset;
     const meta = (S.boot.notifyPresets || []).find((x) => x.id === id) || {};
     nc.providers.push({ name: meta.name || id, type: id, enabled: true });
     renderTab('notify');
-    toast('已添加 ' + (meta.name || id) + '，填入密钥后保存', 'ok');
+    toast('已添加 ' + (meta.name || id) + '，填好凭据后保存', 'ok');
   }));
   const bind = (sel, key, ev) => $$(sel).forEach((el) => el.addEventListener(ev || 'change', () => {
     const i = +el.dataset.i;
@@ -413,6 +466,12 @@ function bindNotify() {
   bind('.np-secret', 'secret', 'change');
   bind('.np-token', 'token', 'change');
   bind('.np-chat', 'chatId', 'change');
+  // 切换类型时重排字段区
+  $$('.np-type').forEach((sel) => sel.addEventListener('change', () => {
+    const i = +sel.dataset.i;
+    if (nc.providers[i]) nc.providers[i].type = sel.value;
+    renderTab('notify');
+  }));
   $$('.np-del').forEach((b) => b.addEventListener('click', () => {
     nc.providers.splice(+b.dataset.i, 1);
     renderTab('notify');
@@ -437,7 +496,7 @@ function bindAppearance() {
     cfg.ui.theme = b.dataset.theme;
     $$('.theme-card').forEach((x) => x.classList.remove('active'));
     b.classList.add('active');
-    applyTheme(cfg.ui.theme);
+    applyTheme(cfg.ui.theme, cfg.ui.customThemes);
     saveConfig();
     toast('已切换到 ' + (b.querySelector('b')?.textContent || cfg.ui.theme), 'ok');
   }));
@@ -450,28 +509,48 @@ function bindAppearance() {
     const r = $('#ct-result');
     if (r) { r.textContent = msg; r.className = 'hint ' + (cls || ''); }
   };
+  // 色块 / hex 双向绑定 + 实时预览
+  const edit = S.editTheme;
+  const syncColor = (k, v, from) => {
+    if (!/^#[0-9a-fA-F]{6}$/.test(v)) return;
+    edit.vars[k] = v.toLowerCase();
+    $$(`[data-ck="${k}"]`).forEach((n) => {
+      if (n !== from) n.value = edit.vars[k];
+    });
+    const pv = $('#ct-preview');
+    if (pv && pv.children.length >= 4) {
+      pv.children[0].style.background = edit.vars.bg;
+      pv.children[1].style.background = edit.vars['bg-panel'];
+      pv.children[2].style.background = edit.vars.ink;
+      pv.children[3].style.background = edit.vars.accent;
+    }
+    // 实时预览到整页
+    applyTheme('__preview__', [{ id: '__preview__', name: 'preview', vars: edit.vars }]);
+  };
+  $$('.color-cell input[type=color]').forEach((n) => n.addEventListener('input', () => syncColor(n.dataset.ck, n.value, n)));
+  $$('.color-cell .color-hex').forEach((n) => n.addEventListener('change', () => syncColor(n.dataset.ck, n.value.trim(), n)));
+  $('#ct-name')?.addEventListener('change', (e) => { edit.name = e.target.value.trim() || '自定义主题'; });
+  $('#ct-id')?.addEventListener('change', (e) => { edit.id = e.target.value.trim() || 'my-theme'; });
   $('#ct-save')?.addEventListener('click', async () => {
     const id = ($('#ct-id')?.value || '').trim() || 'my-theme';
     const name = ($('#ct-name')?.value || '').trim() || '自定义主题';
-    const vars = {};
-    ['bg', 'bg-panel', 'ink', 'ink-2', 'line', 'accent'].forEach((k) => {
-      const v = $('#ct-' + k)?.value;
-      if (v) vars[k] = v;
-    });
+    const vars = { ...edit.vars };
     try {
       await api.post('/api/themes/save', { id, name, vars });
       cfg.ui.customThemes = (cfg.ui.customThemes || []).filter((x) => x.id !== id);
       cfg.ui.customThemes.push({ id, name, vars });
       cfg.ui.theme = id;
-      applyTheme(id);
+      applyTheme(id, cfg.ui.customThemes);
+      edit.id = id;
+      edit.name = name;
       result('已保存并应用', 'ok');
       renderTab('appearance');
     } catch (e) { result(e.message, 'err'); }
   });
   $('#ct-export')?.addEventListener('click', () => {
-    const id = cfg.ui.theme;
-    const t = custom.find((x) => x.id === id);
-    if (!t) { result('先选中一个自定义主题再导出', 'err'); return; }
+    const id = ($('#ct-id')?.value || '').trim() || 'my-theme';
+    const name = ($('#ct-name')?.value || '').trim() || '自定义主题';
+    const t = custom.find((x) => x.id === id) || { id, name, vars: edit.vars };
     const blob = new Blob([JSON.stringify({ format: 'classnote-theme', version: 1, theme: t }, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -487,41 +566,15 @@ function bindAppearance() {
       const text = await f.text();
       const d = await api.post('/api/themes/import', JSON.parse(text));
       cfg.ui.customThemes = d.custom || [];
+      if (d.theme && d.theme.vars) {
+        Object.assign(edit.vars, d.theme.vars);
+        edit.id = d.theme.id || edit.id;
+        edit.name = d.theme.name || edit.name;
+      }
       renderTab('appearance');
       result('已导入 ' + (d.theme && d.theme.name), 'ok');
     } catch (err) { result(err.message, 'err'); }
     e.target.value = '';
-  });
-  $('#ct-market')?.addEventListener('click', async () => {
-    const box = $('#ct-market-list');
-    box.innerHTML = '<div class="desc">加载中…</div>';
-    try {
-      const d = await api.get('/api/themes/market');
-      if (!d.ok) throw new Error(d.error || '加载失败');
-      box.innerHTML = '';
-      for (const t of d.themes || []) {
-        const card = document.createElement('button');
-        card.className = 'theme-card';
-        card.innerHTML = `<div class="theme-swatch"><i style="background:${esc((t.vars || {}).bg || '#fff')}"></i>
-          <i style="background:${esc(t.swatch || (t.vars || {}).accent || '#888')}"></i>
-          <i style="background:${esc((t.vars || {}).line || '#ddd')}"></i></div>
-          <b>${esc(t.name)}</b><span>${esc(t.note || t.author || '社区主题')}</span>`;
-        card.addEventListener('click', async () => {
-          try {
-            const imp = await api.post('/api/themes/import', t);
-            cfg.ui.customThemes = imp.custom || [];
-            cfg.ui.theme = t.id;
-            applyTheme(t.id);
-            renderTab('appearance');
-            toast('已应用 ' + t.name, 'ok');
-          } catch (e) { toast(e.message, 'err'); }
-        });
-        box.append(card);
-      }
-      if (!(d.themes || []).length) box.innerHTML = '<div class="desc">市场里暂时还没有主题</div>';
-    } catch (e) {
-      box.innerHTML = '<div class="desc">' + esc(e.message) + '</div>';
-    }
   });
 }
 
@@ -630,10 +683,17 @@ function aboutTab(cfg) {
       <label>GitHub Token（可选，私有仓库需要）</label>
       <input id="f-ghtoken" type="password" value="${esc((cfg.github && cfg.github.token) || '')}" placeholder="ghp_...">
     </div>
-    <div class="row" style="gap:8px;align-items:center">
+    <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
       <button class="btn small" id="btn-update-check">检查更新</button>
-      <label class="switch"><input type="checkbox" id="f-checkupdates" ${cfg.github && cfg.github.checkUpdates ? 'checked' : ''}><span>启动时自动检查</span></label>
-      <span class="hint" id="update-result"></span>
+      <label class="switch"><input type="checkbox" id="f-checkupdates" ${cfg.github && cfg.github.checkUpdates ? 'checked' : ''}><i></i></label>
+      <span class="hint">启动时自动检查</span>
+    </div>
+    <div class="test-result" id="update-result" hidden></div>
+    <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px" id="update-actions" hidden>
+      <button class="btn small primary" id="btn-update-download">下载更新包</button>
+      <button class="btn small primary" id="btn-update-apply" hidden>安装并重启</button>
+      <button class="btn small" id="btn-update-page">打开发布页</button>
+      <span class="hint" id="update-progress"></span>
     </div>
     <h3>维护</h3>
     <div style="display:flex;gap:6px;flex-wrap:wrap">
@@ -658,15 +718,54 @@ function bindTab(name) {
     $('#f-repo')?.addEventListener('change', (e) => { cfg.github.repo = e.target.value.trim(); saveConfig(); });
     $('#f-ghtoken')?.addEventListener('change', (e) => { cfg.github.token = e.target.value.trim(); saveConfig(); });
     $('#f-checkupdates')?.addEventListener('change', (e) => { cfg.github.checkUpdates = e.target.checked; saveConfig(); });
+    let updateInfo = null;
+    let downloadedPath = '';
     $('#btn-update-check')?.addEventListener('click', async () => {
       const box = $('#update-result');
+      box.hidden = false;
+      box.className = 'test-result';
       box.textContent = '检查中…';
+      $('#update-actions').hidden = true;
       try {
         const d = await api.get('/api/update/check');
-        if (d.error) box.textContent = d.error;
-        else if (d.hasUpdate) box.textContent = `发现新版本 ${d.latest}（当前 ${d.current}）`;
-        else box.textContent = `已是最新（${d.current}）`;
-      } catch (e) { box.textContent = e.message; }
+        updateInfo = d;
+        if (d.error) {
+          box.className = 'test-result err';
+          box.textContent = d.error;
+        } else if (d.hasUpdate) {
+          box.className = 'test-result ok';
+          box.textContent = `发现新版本 ${d.latest}（当前 ${d.current}）${d.notes ? '\n' + d.notes.slice(0, 300) : ''}`;
+          $('#update-actions').hidden = false;
+          $('#btn-update-apply').hidden = true;
+          $('#update-progress').textContent = '';
+          if (d.url) $('#btn-update-page').onclick = () => window.open(d.url, '_blank');
+        } else {
+          box.className = 'test-result ok';
+          box.textContent = `已是最新（${d.current}）`;
+        }
+      } catch (e) { box.className = 'test-result err'; box.textContent = e.message; }
+    });
+    $('#btn-update-download')?.addEventListener('click', async () => {
+      const prog = $('#update-progress');
+      prog.textContent = '下载中…';
+      try {
+        const asset = (updateInfo?.assets || []).find((a) => /\.zip$/i.test(a.name)) || (updateInfo?.assets || [])[0];
+        if (!asset) throw new Error('Release 里没有可下载的附件');
+        const d = await api.post('/api/update/download', { url: asset.url, name: asset.name });
+        downloadedPath = d.path;
+        prog.textContent = '已下载：' + asset.name;
+        $('#btn-update-apply').hidden = false;
+      } catch (e) { prog.textContent = '下载失败：' + e.message; }
+    });
+    $('#btn-update-apply')?.addEventListener('click', async () => {
+      if (!downloadedPath) return;
+      if (!confirm('将退出程序并安装更新，完成后自动重启。继续吗？')) return;
+      const prog = $('#update-progress');
+      prog.textContent = '正在准备升级…';
+      try {
+        await api.post('/api/update/apply', { path: downloadedPath });
+        document.body.innerHTML = '<div style="padding:60px;font-family:sans-serif;color:#666">正在升级 ClassNote…完成后会自动重新打开。</div>';
+      } catch (e) { prog.textContent = '升级失败：' + e.message; }
     });
   }
   if (name === 'model') {

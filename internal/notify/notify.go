@@ -113,6 +113,18 @@ func deliver(p config.NotifyProvider, ev Event) error {
 		return sendTelegram(p, ev)
 	case "serverchan", "server酱":
 		return sendServerChan(p, ev)
+	case "discord":
+		return sendDiscord(p, ev)
+	case "slack":
+		return sendSlack(p, ev)
+	case "bark":
+		return sendBark(p, ev)
+	case "pushplus":
+		return sendPushPlus(p, ev)
+	case "ntfy":
+		return sendNtfy(p, ev)
+	case "gotify":
+		return sendGotify(p, ev)
 	case "webhook", "custom", "":
 		return sendWebhook(p, ev)
 	default:
@@ -247,6 +259,88 @@ func sendWebhook(p config.NotifyProvider, ev Event) error {
 	return postJSON(p.Webhook, payload)
 }
 
+func sendDiscord(p config.NotifyProvider, ev Event) error {
+	if p.Webhook == "" {
+		return fmt.Errorf("缺少 Discord Webhook 地址")
+	}
+	return postJSON(p.Webhook, map[string]any{
+		"username": "ClassNote",
+		"content":  fmt.Sprintf("**%s**\n%s", ev.Title, ev.Text),
+	})
+}
+
+func sendSlack(p config.NotifyProvider, ev Event) error {
+	if p.Webhook == "" {
+		return fmt.Errorf("缺少 Slack Webhook 地址")
+	}
+	return postJSON(p.Webhook, map[string]any{
+		"text": fmt.Sprintf("*%s*\n%s", ev.Title, ev.Text),
+	})
+}
+
+func sendBark(p config.NotifyProvider, ev Event) error {
+	// Bark：iOS 推送。token 放 DeviceKey，或直接把完整地址填在 Webhook。
+	key := p.Token
+	if key == "" {
+		return fmt.Errorf("缺少 Bark DeviceKey")
+	}
+	u := fmt.Sprintf("https://api.day.app/%s", key)
+	return postJSON(u, map[string]any{
+		"title": ev.Title,
+		"body":  ev.Text,
+		"group": "ClassNote",
+	})
+}
+
+func sendPushPlus(p config.NotifyProvider, ev Event) error {
+	key := p.Token
+	if key == "" {
+		return fmt.Errorf("缺少 PushPlus Token")
+	}
+	return postJSON("https://www.pushplus.plus/send", map[string]any{
+		"token":   key,
+		"title":   ev.Title,
+		"content": ev.Text,
+	})
+}
+
+func sendNtfy(p config.NotifyProvider, ev Event) error {
+	// ntfy：topic 地址填 Webhook（如 https://ntfy.sh/my-topic）
+	if p.Webhook == "" {
+		return fmt.Errorf("缺少 ntfy 主题地址")
+	}
+	req, err := http.NewRequest("POST", p.Webhook, strings.NewReader(ev.Text))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Title", ev.Title)
+	req.Header.Set("Priority", map[bool]string{true: "high", false: "default"}[ev.Level != "info"])
+	req.Header.Set("Tags", "ClassNote")
+	resp, err := cli.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
+	}
+	return nil
+}
+
+func sendGotify(p config.NotifyProvider, ev Event) error {
+	// Gotify：服务器地址填 Webhook（…/），token 放 Token
+	if p.Webhook == "" || p.Token == "" {
+		return fmt.Errorf("缺少 Gotify 地址或 Token")
+	}
+	u := strings.TrimRight(p.Webhook, "/") + "/message?token=" + p.Token
+	return postJSON(u, map[string]any{
+		"title":    ev.Title,
+		"message":  ev.Text,
+		"priority": map[bool]int{true: 8, false: 5}[ev.Level != "info"],
+	})
+}
+
 // Presets 返回内置渠道模板，便于界面一键添加。
 func Presets() []map[string]string {
 	return []map[string]string{
@@ -255,6 +349,12 @@ func Presets() []map[string]string {
 		{"id": "feishu", "name": "飞书群机器人", "hint": "群设置 → 群机器人 → 添加自定义机器人，复制 Webhook"},
 		{"id": "telegram", "name": "Telegram Bot", "hint": "找 @BotFather 建 bot 拿 Token，ChatID 可用 @userinfobot 查询"},
 		{"id": "serverchan", "name": "Server酱", "hint": "sct.ftqq.com 获取 SendKey，推送到微信"},
+		{"id": "discord", "name": "Discord", "hint": "频道设置 → 整合 → Webhook，复制地址"},
+		{"id": "slack", "name": "Slack", "hint": "api.slack.com/messaging/webhooks 创建 Incoming Webhook"},
+		{"id": "bark", "name": "Bark（iOS）", "hint": "App 内复制 DeviceKey，推送到 iPhone"},
+		{"id": "pushplus", "name": "PushPlus", "hint": "pushplus.plus 获取 Token，推送到微信"},
+		{"id": "ntfy", "name": "ntfy", "hint": "填主题地址如 https://ntfy.sh/my-topic，手机装 ntfy App 订阅"},
+		{"id": "gotify", "name": "Gotify", "hint": "自建推送服务，填服务器地址 + App Token"},
 		{"id": "webhook", "name": "自定义 Webhook", "hint": "以 JSON POST 到你的地址：{source,title,text,level,time}"},
 	}
 }

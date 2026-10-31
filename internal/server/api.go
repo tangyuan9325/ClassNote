@@ -724,6 +724,47 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, update.Check(g.Repo, g.Token))
 }
 
+// handleUpdateDownload 下载最新 Release 附件到本地。
+func (s *Server) handleUpdateDownload(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		URL  string `json:"url"`
+		Name string `json:"name"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	g := s.cfg.Get().GitHub
+	dest := filepath.Join(s.paths.Root, "data", "updates")
+	path, err := update.Download(body.URL, dest, body.Name, g.Token)
+	if err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "path": path})
+}
+
+// handleUpdateApply 解压下载的更新包并启动替换脚本（随后退出程序完成升级）。
+func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	if err := readJSON(r, &body); err != nil || body.Path == "" {
+		writeErr(w, 400, fmt.Errorf("缺少 path"))
+		return
+	}
+	if err := update.Apply(body.Path, s.paths.Root); err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "message": "升级脚本已启动，程序即将退出并完成替换"})
+	// 给响应留出发送时间，再退出主进程
+	go func() {
+		time.Sleep(800 * time.Millisecond)
+		os.Exit(0)
+	}()
+}
+
 // handleThemesList 列出内置与自定义主题。
 func (s *Server) handleThemesList(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cfg.Get()
@@ -854,6 +895,58 @@ func (s *Server) handlePluginDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "skills": s.plugins.List()})
+}
+
+// handlePluginMarket 拉取技能包市场清单。
+func (s *Server) handlePluginMarket(w http.ResponseWriter, r *http.Request) {
+	items, err := plugin.Market(r.URL.Query().Get("url"))
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "skills": items})
+}
+
+// handlePluginInstall 从市场安装技能包。
+func (s *Server) handlePluginInstall(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID   string             `json:"id"`
+		Item plugin.MarketItem  `json:"item"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	item := body.Item
+	if item.ID == "" {
+		item.ID = body.ID
+	}
+	if item.ID == "" {
+		writeErr(w, 400, fmt.Errorf("缺少 id"))
+		return
+	}
+	// 未给完整内容时从市场清单里找
+	if item.Prompt == "" {
+		items, err := plugin.Market("")
+		if err == nil {
+			for _, m := range items {
+				if m.ID == item.ID {
+					item = m
+					break
+				}
+			}
+		}
+	}
+	if item.Prompt == "" {
+		writeErr(w, 400, fmt.Errorf("市场里没有 %s 的内容", item.ID))
+		return
+	}
+	sk, err := s.plugins.Install(item)
+	if err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "skill": sk, "skills": s.plugins.List()})
 }
 
 // handleAgentInfo 返回 Agent 权限与可用工具。

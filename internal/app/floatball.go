@@ -44,6 +44,7 @@ var (
 	procFBSetCapture      = fbUser32.NewProc("SetCapture")
 	procFBReleaseCapture  = fbUser32.NewProc("ReleaseCapture")
 	procFBGetClientRect   = fbUser32.NewProc("GetClientRect")
+	procFBGetWindowRect   = fbUser32.NewProc("GetWindowRect")
 	procFBTrackMouseEvent = fbUser32.NewProc("TrackMouseEvent")
 
 	procFBCreateDC     = fbGdi32.NewProc("CreateCompatibleDC")
@@ -117,6 +118,14 @@ type FloatBall struct {
 	anim     int // 0..fbAnimFrames，0=收起
 	status   FloatBallStatus
 
+	// 拖动状态：按下记录偏移，移动时跟手；位移超过阈值才算拖动，否则视为点击。
+	dragging   bool
+	dragMoved  bool
+	dragOffX   int32
+	dragOffY   int32
+	dragStartX int32
+	dragStartY int32
+
 	ready chan struct{}
 	done  chan struct{}
 	once  sync.Once
@@ -184,11 +193,10 @@ func (f *FloatBall) run() {
 		return
 	}
 
-	// 默认停靠屏幕右下角
+	// 默认停靠屏幕右上角（可拖动）
 	sw, _, _ := procFBGetSystemM.Call(smCxScreen)
-	sh, _, _ := procFBGetSystemM.Call(smCyScreen)
 	x := int32(sw) - 96
-	y := int32(sh) - 200
+	y := int32(16)
 
 	hwnd, _, err := procFBCreateWindow.Call(wsExLayered|wsExTopmost|wsExToolWindow,
 		uintptr(unsafe.Pointer(className)), 0, wsPopup,
@@ -231,7 +239,22 @@ func fbWndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 		return 0
 	case wmMouseMove:
 		if f != nil {
+			// 拖动中：窗口跟手移动
 			f.mu.Lock()
+			dragging := f.dragging
+			if dragging {
+				var cp struct{ X, Y int32 }
+				procFBGetCursorPos.Call(uintptr(unsafe.Pointer(&cp)))
+				nx := cp.X + f.dragOffX
+				ny := cp.Y + f.dragOffY
+				if abs32(cp.X-f.dragStartX) > 3 || abs32(cp.Y-f.dragStartY) > 3 {
+					f.dragMoved = true
+				}
+				f.mu.Unlock()
+				procFBSetWindowPos.Call(hwnd, 0, uintptr(uint32(nx)), uintptr(uint32(ny)),
+					0, 0, swpNoSize|swpNoActivate|swpShowWindow)
+				return 0
+			}
 			was := f.expanded
 			f.mu.Unlock()
 			if !was {
@@ -255,14 +278,34 @@ func fbWndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 		}
 		return 0
 	case fbLButtonDown:
-		// 允许拖动
-		procFBSetCapture.Call(hwnd)
+		// 开始拖动：记录鼠标相对窗口的偏移，此后移动跟手
+		if f != nil {
+			var cp struct{ X, Y int32 }
+			procFBGetCursorPos.Call(uintptr(unsafe.Pointer(&cp)))
+			var wr struct{ L, T, R, B int32 }
+			procFBGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&wr)))
+			f.mu.Lock()
+			f.dragging = true
+			f.dragMoved = false
+			f.dragOffX = wr.L - cp.X
+			f.dragOffY = wr.T - cp.Y
+			f.dragStartX = cp.X
+			f.dragStartY = cp.Y
+			f.mu.Unlock()
+			procFBSetCapture.Call(hwnd)
+		}
 		return 0
 	case fbLButtonUp:
 		procFBReleaseCapture.Call()
-		if f != nil && f.opts.OpenMain != nil {
-			// 短按打开主界面
-			go f.opts.OpenMain()
+		if f != nil {
+			f.mu.Lock()
+			wasDrag := f.dragMoved
+			f.dragging = false
+			f.mu.Unlock()
+			// 没有实际位移才算点击：短按打开主界面
+			if !wasDrag && f.opts.OpenMain != nil {
+				go f.opts.OpenMain()
+			}
 		}
 		return 0
 	case fbLButtonDbl:
@@ -453,6 +496,13 @@ func clockText(sec int) string {
 		return itoa(h) + ":" + pad2(m%60) + ":" + pad2(s)
 	}
 	return pad2(m) + ":" + pad2(s)
+}
+
+func abs32(v int32) int32 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func pad2(n int) string {

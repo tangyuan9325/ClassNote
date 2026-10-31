@@ -129,8 +129,36 @@ func getBrowser(cfg config.WebAIConfig, profileDir string, headless bool) (*rod.
 	}
 	br := rod.New().ControlURL(ws)
 	if err := br.Connect(); err != nil {
-		_ = proc.Cmd.Process.Kill()
-		return nil, fmt.Errorf("连接浏览器失败: %w", err)
+		// 复用残留实例时 proc.Cmd 为 nil，不能直接 Kill（会空指针拖垮整节课）。
+		if proc.Cmd != nil && proc.Cmd.Process != nil {
+			_ = proc.Cmd.Process.Kill()
+		} else {
+			killByPort(proc.Port)
+		}
+		// 清掉残留后当场重试一次全新启动
+		proc2, err2 := LaunchBrowser(cfg.BrowserPath, profileDir, headless)
+		if err2 != nil {
+			return nil, fmt.Errorf("连接浏览器失败: %w", err)
+		}
+		ws2 := proc2.WS
+		if ws2 == "" {
+			ws2 = proc2.URL
+		}
+		br2 := rod.New().ControlURL(ws2)
+		if err2 := br2.Connect(); err2 != nil {
+			if proc2.Cmd != nil && proc2.Cmd.Process != nil {
+				_ = proc2.Cmd.Process.Kill()
+			} else {
+				killByPort(proc2.Port)
+			}
+			return nil, fmt.Errorf("连接浏览器失败: %w", err2)
+		}
+		webBrowser = br2
+		webProc = proc2
+		webProfile = profileDir
+		webHeadless = headless
+		logx.Infof("webai", "浏览器已重启（无头=%v），调试端口 %d", headless, proc2.Port)
+		return br2, nil
 	}
 	webBrowser = br
 	webProc = proc
