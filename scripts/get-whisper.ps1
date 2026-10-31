@@ -24,10 +24,10 @@ if (-not (Test-Path $bin)) {
     Invoke-WebRequest -Uri "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip" -OutFile $tmp
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [System.IO.Compression.ZipFile]::OpenRead($tmp)
-    $keep = @("whisper-server.exe", "whisper-cli.exe", "whisper.dll", "ggml.dll", "ggml-base.dll", "ggml-cpu-x64.dll", "SDL2.dll")
+    $keep = @("whisper-server.exe", "whisper-cli.exe", "whisper.dll", "ggml.dll", "ggml-base.dll", "SDL2.dll")
     foreach ($e in $zip.Entries) {
         $name = [System.IO.Path]::GetFileName($e.FullName)
-        if ($keep -contains $name) {
+        if (($keep -contains $name) -or ($name -like "ggml-cpu-*.dll")) {
             $dst = Join-Path $OutDir $name
             [System.IO.Compression.ZipFileExtensions]::ExtractToFile($e, $dst, $true)
             Write-Host "    $name"

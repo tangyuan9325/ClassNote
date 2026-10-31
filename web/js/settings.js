@@ -148,13 +148,13 @@ function asrTab(cfg) {
     </div>
     <div class="field-row two">
       <label class="field"><span>语言</span><input id="f-aslang" value="${esc(a.language)}" placeholder="zh"></label>
-      <label class="field"><span>每段最长（秒）</span><input id="f-aschunk" type="number" min="3" max="30" value="${a.chunkSec}"></label>
+      <label class="field"><span>每批最长（秒）</span><input id="f-aschunk" type="number" min="3" max="30" value="${a.chunkSec}" title="超过长度时把最后一句留给下一批"></label>
     </div>
     <div class="field-row two">
       <label class="field"><span>静音断句（毫秒）</span><input id="f-assil" type="number" min="200" max="3000" step="50" value="${a.silenceMs}"></label>
       <label class="field"><span>语音阈值</span><input id="f-asth" type="number" min="0.002" max="0.2" step="0.002" value="${a.threshold}"></label>
     </div>
-    <div class="desc">阈值越低越灵敏；教室噪声大时可适当提高。录音设备留空使用系统默认。</div>
+    <div class="desc">超过批次长度时，会回溯到最近一次句间停顿，把最后一句留到下一批，再送当前批次转写。阈值越低越灵敏；教室噪声大时可适当提高。录音设备留空使用系统默认。</div>
     <button class="btn" id="f-mictest">检测麦克风（2.5 秒）</button>
     <div class="test-result" id="f-mic-result" hidden></div>`;
 }

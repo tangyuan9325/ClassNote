@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,19 +55,14 @@ func EnsureASCIIWhisperDir(bundled string) (string, error) {
 	if target == "" || !isASCIIPath(target) {
 		target = `C://ProgramData//ClassNote//whisper`
 	}
-	// 已经部署过就直接用（模型 180MB，不重复复制）。
-	if _, err := os.Stat(filepath.Join(target, "whisper-server.exe")); err == nil {
-		if len(LocalModels(target)) > 0 {
-			return target, nil
-		}
-	}
+	// 已经部署过也继续检查：新版本可能补充了 CPU 后端 DLL。
 	if err := os.MkdirAll(filepath.Join(target, "models"), 0o755); err != nil {
 		return "", fmt.Errorf("创建语音模型目录失败: %w", err)
 	}
 	// 先复制二进制，再复制模型（模型大，放在最后）。
 	files := []string{
 		"whisper-server.exe", "whisper-cli.exe", "whisper.dll",
-		"ggml.dll", "ggml-base.dll", "ggml-cpu-x64.dll", "SDL2.dll",
+		"ggml.dll", "ggml-base.dll", "SDL2.dll",
 	}
 	for _, f := range files {
 		src := filepath.Join(bundled, f)
@@ -79,6 +75,19 @@ func EnsureASCIIWhisperDir(bundled string) (string, error) {
 		}
 		if err := copyFileSimple(src, dst); err != nil {
 			return "", fmt.Errorf("复制 %s 失败: %w", f, err)
+		}
+	}
+	// 复制全部 CPU 后端（ggml-cpu-alderlake / haswell / ...）。
+	// whisper.cpp 会按 CPU 指令集自动挑最快的，只带 x64 通用版会慢一个数量级。
+	backends, _ := filepath.Glob(filepath.Join(bundled, "ggml-cpu-*.dll"))
+	for _, src := range backends {
+		name := filepath.Base(src)
+		dst := filepath.Join(target, name)
+		if fi, err := os.Stat(dst); err == nil && fi.Size() > 0 {
+			continue
+		}
+		if err := copyFileSimple(src, dst); err != nil {
+			return "", fmt.Errorf("复制 %s 失败: %w", name, err)
 		}
 	}
 	models, _ := os.ReadDir(filepath.Join(bundled, "models"))
@@ -187,9 +196,19 @@ func StartLocal(dir, model string, port int) (*LocalServer, error) {
 		return s, nil
 	}
 
+	// 默认 4 线程在 12 代酷睿上仍然偏慢；按逻辑核心数给足线程，
+	// 同时限制上限，避免在低功耗机器上抢占课堂其他程序。
+	threads := runtime.NumCPU()
+	if threads < 4 {
+		threads = 4
+	}
+	if threads > 16 {
+		threads = 16
+	}
 	cmd := exec.Command(exe,
 		"-m", model,
 		"-l", "zh",
+		"-t", strconv.Itoa(threads),
 		"--port", strconv.Itoa(port),
 		"--host", "127.0.0.1",
 		"--no-timestamps",

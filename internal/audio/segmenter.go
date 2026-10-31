@@ -55,6 +55,12 @@ type Segmenter struct {
 	level   float64
 	started time.Time
 	adapted bool
+
+	// 句间短停顿（< SilenceMS）的位置，用于到达长度上限时回溯切分：
+	// 把最后一句话留给下一批，而不是从中间切断。
+	pauseAt int
+	lowRun  int
+	lowFrom int
 }
 
 // NewSegmenter 创建切分器。
@@ -107,15 +113,25 @@ func (s *Segmenter) Push(pcm []int16) []Segment {
 			s.noise = s.noise*0.97 + rms*0.03
 		}
 		if active {
+			// 短停顿结束、重新出声：把刚才停顿的起点记为候选句界。
+			if s.lowRun*20 >= 80 && s.lowFrom > 0 && s.lowFrom < len(s.cur) {
+				s.pauseAt = s.lowFrom
+			}
+			s.lowRun = 0
 			if !s.speech {
 				s.speech = true
 				s.started = time.Now()
 				s.cur = append(s.cur[:0], s.pre...)
+				s.pauseAt = 0
 			}
 			s.silent = 0
 			s.cur = append(s.cur, chunk...)
 		} else {
 			if s.speech {
+				if s.lowRun == 0 {
+					s.lowFrom = len(s.cur)
+				}
+				s.lowRun++
 				s.silent++
 				// 语音尾部也保留，避免吞字。
 				s.cur = append(s.cur, chunk...)
@@ -126,10 +142,11 @@ func (s *Segmenter) Push(pcm []int16) []Segment {
 				}
 			} else {
 				s.pushPre(chunk)
+				s.lowRun = 0
 			}
 		}
 		if s.speech && len(s.cur) >= s.cfg.SampleRate*s.cfg.MaxSec {
-			if seg, ok := s.finish(); ok {
+			if seg, ok := s.finishAtLimit(); ok {
 				out = append(out, seg)
 			}
 		}
@@ -145,23 +162,52 @@ func (s *Segmenter) Flush() (Segment, bool) {
 	return s.finish()
 }
 
+// finishAtLimit 到达长度上限时的切分：优先回溯到最近一次短停顿，
+// 把最后一句留在 cur 里归入下一批，只把前面的内容送去转写。
+// 没有可用的句界（例如持续连读）时退回整段硬切，避免无限增长。
+func (s *Segmenter) finishAtLimit() (Segment, bool) {
+	rate := s.cfg.SampleRate
+	tailMin := rate / 5 // 至少留 200ms 给下一批
+	headMin := rate * s.cfg.MinSec
+	if s.pauseAt >= headMin && len(s.cur)-s.pauseAt >= tailMin {
+		head := append([]int16(nil), s.cur[:s.pauseAt]...)
+		tail := append([]int16(nil), s.cur[s.pauseAt:]...)
+		seg := s.makeSegment(head, s.started, time.Now())
+		s.cur = tail
+		s.started = time.Now().Add(-time.Duration(len(tail)) * time.Second / time.Duration(rate))
+		s.pauseAt = 0
+		s.silent = 0
+		s.lowRun = 0
+		s.lowFrom = 0
+		return seg, true
+	}
+	return s.finish()
+}
+
 func (s *Segmenter) finish() (Segment, bool) {
 	cur := s.cur
 	s.cur = nil
 	s.speech = false
 	s.silent = 0
+	s.pauseAt = 0
+	s.lowRun = 0
+	s.lowFrom = 0
 	minLen := s.cfg.SampleRate * s.cfg.MinSec
 	if len(cur) < minLen {
 		return Segment{}, false
 	}
+	return s.makeSegment(cur, s.started, time.Now()), true
+}
+
+func (s *Segmenter) makeSegment(pcm []int16, started, ended time.Time) Segment {
 	peak := 0.0
-	for _, v := range cur {
+	for _, v := range pcm {
 		f := math.Abs(float64(v)) / 32768
 		if f > peak {
 			peak = f
 		}
 	}
-	return Segment{PCM: cur, Peak: peak, StartedAt: s.started, EndedAt: time.Now()}, true
+	return Segment{PCM: pcm, Peak: peak, StartedAt: started, EndedAt: ended}
 }
 
 func (s *Segmenter) pushPre(chunk []int16) {
