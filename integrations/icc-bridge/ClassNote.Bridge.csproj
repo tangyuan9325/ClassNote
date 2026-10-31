@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>ClassNote.Bridge</AssemblyName>
+    <RootNamespace>ClassNote.Bridge</RootNamespace>
+    <Version>1.0.0</Version>
+    <Company>ClassNote</Company>
+    <Product>ClassNote Bridge for InkCanvasForClass</Product>
+    <Description>把 InkCanvasForClass 的放映状态推送给 ClassNote</Description>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- ICC 安装目录，可通过 -p:IccDir=... 覆盖 -->
+    <IccDir Condition="'$(IccDir)' == ''">$(ICC_DIR)</IccDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('$(IccDir)\InkCanvasForClass.exe')">
+    <Reference Include="InkCanvasForClass">
+      <HintPath>$(IccDir)\InkCanvasForClass.exe</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

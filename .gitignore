@@ -1,0 +1,33 @@
+# 构建产物
+/ClassNote.exe
+/ClassNote-debug.exe
+/dist/
+/build/
+*.exe
+
+# 允许随包分发的 whisper 运行时二进制（体积小，纳入版本管理）
+!integrations/whisper/*.exe
+!integrations/whisper/*.dll
+
+# 语音模型体积超过 GitHub 单文件上限（100MB），不入库；
+# 构建前用 scripts/get-whisper.ps1 下载，或手动放到 integrations/whisper/models/
+integrations/whisper/models/
+integrations/whisper/*.log
+
+# 运行时数据（含密钥与课堂记录，绝不能提交）
+/config.json
+/data/
+*.log
+
+# 编辑器
+.idea/
+.vscode/
+*.iml
+
+# 系统
+Thumbs.db
+desktop.ini
+
+# C# 构建中间产物
+integrations/**/bin/
+integrations/**/obj/
