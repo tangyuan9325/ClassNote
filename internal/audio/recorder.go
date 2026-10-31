@@ -133,8 +133,25 @@ func (r *Recorder) Start(device int) error {
 		devID = uintptr(waveMapper)
 	}
 	var h uintptr
-	ret, _, _ := procWaveInOpen.Call(uintptr(unsafe.Pointer(&h)), devID,
-		uintptr(unsafe.Pointer(&wf)), 0, 0, callbackNull)
+	open := func(id uintptr) uintptr {
+		var hh uintptr
+		ret, _, _ := procWaveInOpen.Call(uintptr(unsafe.Pointer(&hh)), id,
+			uintptr(unsafe.Pointer(&wf)), 0, 0, callbackNull)
+		if ret == 0 {
+			h = hh
+		}
+		return ret
+	}
+	ret := open(devID)
+	// 默认设备（WAVE_MAPPER）打不开时，逐个尝试枚举到的录音设备。
+	// 常见于只插了 USB 麦克风、系统默认设备被禁用，或默认设备被独占的情况。
+	if ret != 0 && device < 0 {
+		for i := 0; i < Devices(); i++ {
+			if ret = open(uintptr(i)); ret == 0 {
+				break
+			}
+		}
+	}
 	if ret != 0 {
 		return fmt.Errorf("打开录音设备失败 (code=%d)，请检查麦克风权限", ret)
 	}

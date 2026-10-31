@@ -2,6 +2,16 @@
 
 这个目录用于放置与外部软件的桥接组件。
 
+## ClassIsland 注入插件
+
+源码在 `classisland-bridge/`，编译产物是 `ClassNote.IslandBridge.cnx`（zip 包，内含 DLL + manifest + 图标），
+由 ClassNote 内嵌，设置 → 集成 → 「安装 / 更新插件」会解压到 `<ClassIsland 数据目录>/Plugins/classnote.islandbridge/`。
+
+- 目标框架：net8.0，ClassIsland API 2.0（已在 2.1.0.1 上验证加载）
+- 状态接口：`http://127.0.0.1:51888/state`（端口被占用时自动顺延）
+- 通知接口：`POST /notify`，由插件转交 ClassIsland 的通知宿主
+- 重新编译：`dotnet build -c Release`
+
 ## InkCanvasForClass CE 事件桥
 
 插件源码在 `icc-bridge/`，编译产物随程序发布在 `plugins/ClassNote.Bridge.dll`。

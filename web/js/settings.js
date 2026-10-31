@@ -9,12 +9,16 @@ const SUBJECTS = ['语文', '数学', '英语', '物理', '化学', '生物', '�
 
 const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
-export function openSettings(state) {
+export function openSettings(state, initialTab) {
   S = state;
   $('#drawer').hidden = false;
   $('#drawer-mask').hidden = false;
   $('#drawer-saved').textContent = '';
   bind();
+  if (initialTab) {
+    tab = initialTab;
+    $$('#drawer-tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  }
   renderTab(tab);
 }
 
@@ -221,6 +225,21 @@ function integTab(cfg) {
       <button class="btn small ghost" id="f-cireload">刷新状态</button>
     </div>
 
+    <h3>ClassIsland 注入插件</h3>
+    <div class="desc">把联动插件装进 ClassIsland 后，上课/下课与当前科目会实时注入，比读取课表文件更准；ClassNote 也能让 ClassIsland 弹出课堂提醒。</div>
+    <div class="panel" style="margin:10px 0 12px;padding:12px 14px">
+      <div class="kv"><span>安装状态</span><b id="f-ciplugin">检测中…</b></div>
+      <div class="kv"><span>连接</span><b id="f-cipluginlink">—</b></div>
+      <div class="kv"><span>插件目录</span><b id="f-ciplugindir" style="font-size:11px;font-weight:400">—</b></div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn small primary" id="f-ciinstall">安装 / 更新插件</button>
+      <button class="btn small" id="f-citest">测试连接</button>
+      <button class="btn small" id="f-cinotify">发送测试提醒</button>
+      <button class="btn small danger" id="f-ciuninstall">卸载插件</button>
+    </div>
+    <div class="desc" style="margin-top:10px">安装后需要重启 ClassIsland 才会加载插件；状态接口只监听本机 127.0.0.1。</div>
+
     <h3>InkCanvasForClass CE</h3>
     <div class="desc">ICC 运行时注入桥接插件，可实时接收放映/翻页事件；未注入也能正常检测放映。</div>
     <label class="field"><span>InkCanvasForClass.exe</span><input id="f-iccexe" value="${esc(icc.exePath)}" placeholder="留空则自动从进程定位"></label>
@@ -292,7 +311,7 @@ function appearTab(cfg) {
         <input type="file" id="ct-file" accept="application/json" hidden>
         <span class="hint" id="ct-result"></span>
       </div>
-      <div class="desc" style="margin-top:8px">改动颜色会立即预览；保存后可在上方主题列表选用。主题市场在侧栏「市场」页。</div>
+      <div class="desc" style="margin-top:8px">改动颜色会立即预览；保存后可在上方主题列表选用。社区主题在右侧「主题商店」页。</div>
     </div>
 
     <h3>显示</h3>
@@ -871,6 +890,33 @@ function bindTab(name) {
       } catch (e) { toast(e.message, 'err'); }
     });
     $('#f-cireload')?.addEventListener('click', refreshInteg);
+    refreshCIPlugin();
+    $('#f-ciinstall')?.addEventListener('click', async () => {
+      try {
+        const d = await api.post('/api/integrations/classisland/install', {});
+        toast(d.plugin?.installed ? '插件已安装，重启 ClassIsland 后生效' : '已写入插件文件', 'ok');
+        refreshCIPlugin();
+      } catch (e) { toast(e.message, 'err'); }
+    });
+    $('#f-ciuninstall')?.addEventListener('click', async () => {
+      if (!confirm('从 ClassIsland 卸载 ClassNote 联动插件？')) return;
+      try { await api.post('/api/integrations/classisland/uninstall', {}); toast('已卸载', 'ok'); refreshCIPlugin(); }
+      catch (e) { toast(e.message, 'err'); }
+    });
+    $('#f-citest')?.addEventListener('click', async () => {
+      try {
+        const d = await api.get('/api/integrations/classisland/plugin');
+        if (d.running) toast(`已连接 · ${d.state?.inClass ? '上课中 ' + d.state.subject : '当前无课'}`, 'ok');
+        else toast(d.error || '插件未运行', 'err');
+        refreshCIPlugin();
+      } catch (e) { toast(e.message, 'err'); }
+    });
+    $('#f-cinotify')?.addEventListener('click', async () => {
+      try {
+        await api.post('/api/integrations/classisland/notify', { title: 'ClassNote', body: '这是一条来自课记的测试提醒。' });
+        toast('已在 ClassIsland 弹出提醒', 'ok');
+      } catch (e) { toast(e.message, 'err'); }
+    });
     $('#f-iccinject')?.addEventListener('click', async () => {
       readTab('integrations');
       try {
@@ -914,6 +960,23 @@ function bindTab(name) {
   }
 }
 
+async function refreshCIPlugin() {
+  const set = (sel, txt) => { const n = $(sel); if (n) n.textContent = txt; };
+  try {
+    const d = await api.get('/api/integrations/classisland/plugin');
+    set('#f-ciplugin', d.installed ? `已安装 ${d.version || ''}` : '未安装');
+    set('#f-ciplugindir', d.pluginsDir || '—');
+    if (d.running) {
+      const st = d.state || {};
+      set('#f-cipluginlink', `已连接 · 端口 ${d.port}${st.inClass ? ' · 上课中 ' + (st.subject || '') : ' · 当前无课'}`);
+    } else {
+      set('#f-cipluginlink', d.installed ? '未运行（重启 ClassIsland 后加载）' : '—');
+    }
+  } catch (e) {
+    set('#f-ciplugin', '检测失败：' + e.message);
+  }
+}
+
 async function refreshInteg() {
   try {
     const d = await api.get('/api/integrations/status');
@@ -930,6 +993,7 @@ async function refreshInteg() {
       $('#f-iccplugin').textContent = icc.pluginInstalled ? `已安装（${icc.pluginVersion}）` : '未安装';
     }
   } catch (e) { /* ignore */ }
+  refreshCIPlugin();
 }
 
 function readTab(name) {

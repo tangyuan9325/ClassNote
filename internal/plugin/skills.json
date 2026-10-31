@@ -6,7 +6,9 @@
       "description": "语文课：从关键词句切入，讲清表达效果",
       "prompt": "分析课文时先抓关键词句，再讲它的表达效果与情感，避免泛泛而谈。",
       "tools": ["notes", "capture"],
-      "author": "ClassNote 内置"
+      "author": "ClassNote 内置",
+      "downloads": 38200,
+      "stars": 96
     },
     {
       "id": "formula-derivation",
@@ -14,7 +16,9 @@
       "description": "理科课：把公式推导过程拆成一步步可跟的链条",
       "prompt": "涉及公式时写出推导链条：已知 → 变形 → 代入 → 结论，每步给一句依据。",
       "tools": ["notes"],
-      "author": "ClassNote 内置"
+      "author": "ClassNote 内置",
+      "downloads": 31500,
+      "stars": 88
     },
     {
       "id": "exam-point-tag",
@@ -22,7 +26,9 @@
       "description": "把当页内容标注到常见考点/题型",
       "prompt": "每页笔记末尾补一行「考点」，指出它常考的题型与易错点。",
       "tools": ["notes", "report"],
-      "author": "ClassNote 内置"
+      "author": "ClassNote 内置",
+      "downloads": 27400,
+      "stars": 73
     },
     {
       "id": "moral-story",
@@ -30,7 +36,9 @@
       "description": "语文/班会课：结尾提炼本课立意与现实启示",
       "prompt": "课堂结束前用两三句话提炼这堂课的立意，并给出一个能带进生活的启示。",
       "tools": ["notes", "report"],
-      "author": "ClassNote 社区"
+      "author": "ClassNote 社区",
+      "downloads": 12600,
+      "stars": 41
     },
     {
       "id": "experiment-steps",
@@ -38,7 +46,9 @@
       "description": "理化生实验课：按目的/器材/步骤/结论梳理",
       "prompt": "实验相关内容按「实验目的 → 器材 → 步骤 → 现象 → 结论」五栏整理，注意标注安全事项。",
       "tools": ["notes"],
-      "author": "ClassNote 社区"
+      "author": "ClassNote 社区",
+      "downloads": 9800,
+      "stars": 35
     },
     {
       "id": "english-syntax",
@@ -46,7 +56,9 @@
       "description": "英语课：把长难句拆成主干与修饰成分",
       "prompt": "遇到英语长难句时先找主干（主谓宾），再把定语从句、状语等修饰成分标出来并翻译。",
       "tools": ["notes"],
-      "author": "ClassNote 社区"
+      "author": "ClassNote 社区",
+      "downloads": 15400,
+      "stars": 52
     },
     {
       "id": "timeline-events",
@@ -54,7 +66,9 @@
       "description": "历史课：把事件排成时间线并标注因果",
       "prompt": "历史事件按时间线排列，相邻事件之间用箭头标出因果或转折关系。",
       "tools": ["notes", "report"],
-      "author": "ClassNote 社区"
+      "author": "ClassNote 社区",
+      "downloads": 8700,
+      "stars": 29
     },
     {
       "id": "map-location",
@@ -62,7 +76,9 @@
       "description": "地理课：每页标注关键地名与位置关系",
       "prompt": "地理知识点标注关键地名、方位与相对位置（如『位于 X 以北』），避免只罗列名词。",
       "tools": ["notes"],
-      "author": "ClassNote 社区"
+      "author": "ClassNote 社区",
+      "downloads": 6400,
+      "stars": 22
     },
     {
       "id": "homework-detective",
@@ -70,7 +86,9 @@
       "description": "下课前汇总老师口头布置的作业与截止时间",
       "prompt": "留意转写中老师提到的作业、练习、截止时间，课堂结尾单独汇总成「今日作业」清单；没提到就不写。",
       "tools": ["report"],
-      "author": "ClassNote 社区"
+      "author": "ClassNote 社区",
+      "downloads": 21900,
+      "stars": 67
     },
     {
       "id": "question-log",
@@ -78,7 +96,29 @@
       "description": "把老师的课堂提问与典型回答记下来",
       "prompt": "转写中出现的课堂提问单独记录：问题、谁回答的、回答要点，用于课后复盘。",
       "tools": ["notes", "report"],
-      "author": "ClassNote 社区"
+      "author": "ClassNote 社区",
+      "downloads": 11200,
+      "stars": 33
+    },
+    {
+      "id": "mistake-attribution",
+      "name": "错题归因",
+      "description": "练习讲评课：把错题按概念/计算/审题分类归因",
+      "prompt": "讲评错题时按「概念不清 / 计算失误 / 审题偏差 / 表达不规范」四类归因，每类给一条改进动作。",
+      "tools": ["notes"],
+      "author": "ClassNote 社区",
+      "downloads": 7300,
+      "stars": 26
+    },
+    {
+      "id": "dictation-coach",
+      "name": "听写助手",
+      "description": "英语/语文：从当页词汇自动生成听写清单",
+      "prompt": "当页出现新词时整理成听写清单，标注词性、易错点，并用一个短句示范用法。",
+      "tools": ["notes"],
+      "author": "ClassNote 社区",
+      "downloads": 5100,
+      "stars": 18
     }
   ]
 }

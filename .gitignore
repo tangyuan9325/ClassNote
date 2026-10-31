@@ -31,3 +31,4 @@ desktop.ini
 # C# 构建中间产物
 integrations/**/bin/
 integrations/**/obj/
+integrations/**/dist/

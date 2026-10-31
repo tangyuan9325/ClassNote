@@ -950,6 +950,118 @@ func (s *Server) handlePluginInstall(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAgentInfo 返回 Agent 权限与可用工具。
+// handleAgentChat 是独立 Agent 页的对话入口：
+// 有 sessionId 时带上该堂课的笔记与转写，没有时以通用助手模式回答。
+func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Question  string `json:"question"`
+		SessionID string `json:"sessionId"`
+		History   []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"history"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	if strings.TrimSpace(body.Question) == "" {
+		writeErr(w, 400, fmt.Errorf("问题不能为空"))
+		return
+	}
+	client := s.Client()
+	if client == nil {
+		c, err := s.RefreshClient()
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		client = c
+	}
+	sys := "你是 ClassNote（课记）的课堂助手，服务对象是正在上课或刚下课的老师。" +
+		"回答用简体中文，直接给结论和可执行的建议，不要寒暄，不要复述问题。"
+	ctxText := ""
+	mode := "general"
+	if body.SessionID != "" {
+		if sess, err := s.store.Load(body.SessionID); err == nil {
+			ctxText = sessionContext(sess, 6000)
+			mode = "session"
+			sys += "\n\n你会看到这堂课的幻灯片要点、笔记与录音片段。回答要紧扣这些材料，" +
+				"材料里没有的信息要明确说「这堂课没有记录到」，不要编造。"
+		}
+	}
+	if s.plugins != nil {
+		if p := strings.TrimSpace(s.plugins.Prompt()); p != "" {
+			sys += "\n\n# 已启用的技能包\n" + p
+		}
+	}
+	msgs := []llm.Message{llm.TextMessage(llm.RoleSystem, sys)}
+	start := len(body.History) - 10
+	if start < 0 {
+		start = 0
+	}
+	for _, h := range body.History[start:] {
+		if strings.TrimSpace(h.Content) == "" {
+			continue
+		}
+		role := llm.RoleAssistant
+		if h.Role == "user" {
+			role = llm.RoleUser
+		}
+		msgs = append(msgs, llm.TextMessage(role, h.Content))
+	}
+	q := body.Question
+	if ctxText != "" {
+		q = "课堂材料：\n" + ctxText + "\n\n老师的问题：" + body.Question
+	}
+	msgs = append(msgs, llm.UserText(q))
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	res, err := client.Chat(ctx, msgs, llm.Options{Subject: "课堂助手", Temperature: 0.5, MaxTokens: 2048})
+	if err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "answer": res.Text, "mode": mode})
+}
+
+// sessionContext 把一堂课压成适合放进提示词的材料。
+func sessionContext(sess *store.Session, limit int) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "学科：%s\n课题：%s\n", sess.Subject, sess.Title)
+	for _, seg := range sess.Segments {
+		if seg.Summary == "" && seg.Notes == "" && seg.Transcript == "" {
+			continue
+		}
+		fmt.Fprintf(&sb, "\n--- 第 %d 页 ---\n", seg.Index)
+		if seg.Summary != "" {
+			fmt.Fprintf(&sb, "要点：%s\n", seg.Summary)
+		}
+		if seg.Notes != "" {
+			fmt.Fprintf(&sb, "笔记：%s\n", clipRunes(seg.Notes, 600))
+		}
+		if seg.Transcript != "" {
+			fmt.Fprintf(&sb, "录音：%s\n", clipRunes(seg.Transcript, 700))
+		}
+		if sb.Len() > limit*2 {
+			break
+		}
+	}
+	out := sb.String()
+	if len([]rune(out)) > limit {
+		out = string([]rune(out)[:limit])
+	}
+	return out
+}
+
+func clipRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
+}
+
 func (s *Server) handleAgentInfo(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cfg.Get()
 	writeJSON(w, map[string]any{
@@ -1106,6 +1218,47 @@ func (s *Server) handleCIPush(w http.ResponseWriter, r *http.Request) {
 	}
 	s.ci.Push(st)
 	s.broadcast(lesson.Event{Type: "classisland", Data: st, At: now})
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// handleCIPlugin 返回 ClassIsland 注入插件的安装与连通状态。
+func (s *Server) handleCIPlugin(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.ci.PluginInfo())
+}
+
+func (s *Server) handleCIPluginInstall(w http.ResponseWriter, r *http.Request) {
+	info, err := s.ci.InstallPlugin()
+	if err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "plugin": info})
+}
+
+func (s *Server) handleCIPluginUninstall(w http.ResponseWriter, r *http.Request) {
+	if err := s.ci.UninstallPlugin(); err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (s *Server) handleCIPluginNotify(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	if strings.TrimSpace(body.Title) == "" {
+		body.Title = "ClassNote"
+	}
+	if err := s.ci.NotifyPlugin(body.Title, body.Body); err != nil {
+		writeErr(w, 500, err)
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true})
 }
 

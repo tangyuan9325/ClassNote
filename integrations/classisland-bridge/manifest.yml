@@ -1,0 +1,10 @@
+id: classnote.islandbridge
+name: ClassNote 课记联动
+description: 把上课/下课、当前科目与下一节课注入 ClassNote（课记），并接收课堂记录提醒。
+entranceAssembly: "ClassNote.IslandBridge.dll"
+url: https://github.com/tangyuan9325/ClassNote
+version: 1.0.0.0
+apiVersion: 2.0.0.0
+author: ClassNote
+icon: icon.png
+readme: README.md

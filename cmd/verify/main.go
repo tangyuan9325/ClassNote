@@ -352,6 +352,39 @@ func main() {
 		return fmt.Sprintf("技能包市场 %d 项 · 一键更新接口就绪", len(m.Skills)), nil
 	})
 
+	c.check("ClassIsland 注入插件", func() (string, error) {
+		var d struct {
+			Installed bool   `json:"installed"`
+			Running   bool   `json:"running"`
+			Version   string `json:"version"`
+			Port      int    `json:"port"`
+			Error     string `json:"error"`
+			State     *struct {
+				InClass bool   `json:"inClass"`
+				Subject string `json:"subject"`
+				Next    string `json:"next"`
+			} `json:"state"`
+		}
+		if err := c.getJSON("/api/integrations/classisland/plugin", &d); err != nil {
+			return "", err
+		}
+		if !d.Installed {
+			return "", fmt.Errorf("未安装：%s", d.Error)
+		}
+		if !d.Running {
+			return fmt.Sprintf("已安装 %s · 未运行（重启 ClassIsland 后加载）", d.Version), nil
+		}
+		cur := "当前无课"
+		if d.State != nil {
+			if d.State.InClass {
+				cur = "上课中 " + d.State.Subject
+			} else if d.State.Next != "" {
+				cur = "下一节 " + d.State.Next
+			}
+		}
+		return fmt.Sprintf("已连接 · 端口 %d · %s", d.Port, cur), nil
+	})
+
 	c.check("通知渠道扩展", func() (string, error) {
 		var d struct {
 			Presets []struct {
@@ -515,7 +548,7 @@ func main() {
 		if st.Error != "" {
 			return "", fmt.Errorf("%s", st.Error)
 		}
-		if st.Source != "profile" && st.Source != "manual" && st.Source != "push" {
+		if st.Source != "profile" && st.Source != "manual" && st.Source != "push" && st.Source != "plugin" {
 			return "", fmt.Errorf("课表来源异常：%s", st.Source)
 		}
 		if len(st.Today) == 0 {
@@ -1062,6 +1095,39 @@ func main() {
 			return "", fmt.Errorf("技能包市场异常: %s", m.Error)
 		}
 		return fmt.Sprintf("技能包市场 %d 项 · 一键更新接口就绪", len(m.Skills)), nil
+	})
+
+	c.check("ClassIsland 注入插件", func() (string, error) {
+		var d struct {
+			Installed bool   `json:"installed"`
+			Running   bool   `json:"running"`
+			Version   string `json:"version"`
+			Port      int    `json:"port"`
+			Error     string `json:"error"`
+			State     *struct {
+				InClass bool   `json:"inClass"`
+				Subject string `json:"subject"`
+				Next    string `json:"next"`
+			} `json:"state"`
+		}
+		if err := c.getJSON("/api/integrations/classisland/plugin", &d); err != nil {
+			return "", err
+		}
+		if !d.Installed {
+			return "", fmt.Errorf("未安装：%s", d.Error)
+		}
+		if !d.Running {
+			return fmt.Sprintf("已安装 %s · 未运行（重启 ClassIsland 后加载）", d.Version), nil
+		}
+		cur := "当前无课"
+		if d.State != nil {
+			if d.State.InClass {
+				cur = "上课中 " + d.State.Subject
+			} else if d.State.Next != "" {
+				cur = "下一节 " + d.State.Next
+			}
+		}
+		return fmt.Sprintf("已连接 · 端口 %d · %s", d.Port, cur), nil
 	})
 
 	c.check("通知渠道扩展", func() (string, error) {

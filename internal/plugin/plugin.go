@@ -41,6 +41,8 @@ type Skill struct {
 	Enabled     bool     `json:"enabled"`
 	Author      string   `json:"author,omitempty"`
 	BuiltIn     bool     `json:"builtIn,omitempty"`
+	Downloads   int      `json:"downloads,omitempty"`
+	Stars       int      `json:"stars,omitempty"`
 }
 
 // Registry 是技能包仓库。
@@ -223,6 +225,8 @@ type MarketItem struct {
 	Tools       []string `json:"tools,omitempty"`
 	Author      string   `json:"author,omitempty"`
 	URL         string   `json:"url,omitempty"`
+	Downloads   int      `json:"downloads,omitempty"`
+	Stars       int      `json:"stars,omitempty"`
 }
 
 var marketCli = &http.Client{Timeout: 15 * time.Second}
@@ -247,7 +251,7 @@ func Market(registry string) ([]MarketItem, error) {
 		return parseSkillMarket(bundledSkills)
 	}
 	if items, err := parseSkillMarket(raw); err == nil && len(items) > 0 {
-		return items, nil
+		return mergeBundledMeta(items), nil
 	}
 	return parseSkillMarket(bundledSkills)
 }
@@ -266,11 +270,36 @@ func parseSkillMarket(raw []byte) ([]MarketItem, error) {
 	return nil, fmt.Errorf("技能包市场格式不正确")
 }
 
+// mergeBundledMeta 用随包清单补全远端缺失的下载量/星标，
+// 这样即使 GitHub 上的 skills.json 还是旧格式，界面也能显示完整信息。
+func mergeBundledMeta(items []MarketItem) []MarketItem {
+	local, err := parseSkillMarket(bundledSkills)
+	if err != nil {
+		return items
+	}
+	meta := make(map[string]MarketItem, len(local))
+	for _, s := range local {
+		meta[s.ID] = s
+	}
+	for i := range items {
+		if m, ok := meta[items[i].ID]; ok {
+			if items[i].Downloads == 0 {
+				items[i].Downloads = m.Downloads
+			}
+			if items[i].Stars == 0 {
+				items[i].Stars = m.Stars
+			}
+		}
+	}
+	return items
+}
+
 // Install 从市场条目安装技能包（写入本地，返回安装后的技能包）。
 func (r *Registry) Install(m MarketItem) (Skill, error) {
 	s := Skill{
 		ID: m.ID, Name: m.Name, Description: m.Description,
 		Prompt: m.Prompt, Tools: m.Tools, Author: m.Author, Enabled: true,
+		Downloads: m.Downloads, Stars: m.Stars,
 	}
 	if err := r.Save(s); err != nil {
 		return Skill{}, err

@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>ClassNote.IslandBridge</AssemblyName>
+    <RootNamespace>ClassNote.IslandBridge</RootNamespace>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <ClassIslandDir Condition="'$(ClassIslandDir)' == ''">E:\私人\02_软件应用\课表\app-2.1.0.0-0</ClassIslandDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="ClassIsland.Core">
+      <HintPath>$(ClassIslandDir)\ClassIsland.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ClassIsland.Shared">
+      <HintPath>$(ClassIslandDir)\ClassIsland.Shared.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ClassIsland.Shared.IPC">
+      <HintPath>$(ClassIslandDir)\ClassIsland.Shared.IPC.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.Extensions.DependencyInjection.Abstractions">
+      <HintPath>$(ClassIslandDir)\Microsoft.Extensions.DependencyInjection.Abstractions.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.Extensions.Hosting.Abstractions">
+      <HintPath>$(ClassIslandDir)\Microsoft.Extensions.Hosting.Abstractions.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="CommunityToolkit.Mvvm">
+      <HintPath>$(ClassIslandDir)\CommunityToolkit.Mvvm.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="manifest.yml" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="icon.png" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="README.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

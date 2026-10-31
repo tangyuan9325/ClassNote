@@ -4,6 +4,7 @@ package integration
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -30,6 +31,7 @@ type Lesson struct {
 type ClassState struct {
 	Running   bool      `json:"running"`
 	Detected  bool      `json:"detected"`
+	Plugin    bool      `json:"plugin,omitempty"`
 	DataDir   string    `json:"dataDir"`
 	Profile   string    `json:"profile"`
 	InClass   bool      `json:"inClass"`
@@ -37,7 +39,7 @@ type ClassState struct {
 	Current   *Lesson   `json:"current,omitempty"`
 	Next      *Lesson   `json:"next,omitempty"`
 	Today     []Lesson  `json:"today"`
-	Source    string    `json:"source"` // profile | manual | push | none
+	Source    string    `json:"source"` // profile | manual | push | plugin | none
 	Monitored bool      `json:"monitored"`
 	UpdatedAt time.Time `json:"updatedAt"`
 	Hint      string    `json:"hint,omitempty"`
@@ -57,6 +59,13 @@ type ClassIslandProvider struct {
 	profile  *ciProfile
 	profPath string
 	loadedOK bool
+
+	// 注入插件（ClassIsland 内运行）的状态缓存
+	pluginClient *http.Client
+	pluginLast   PluginState
+	pluginAt     time.Time
+	pluginOK     bool
+	pluginPort   int
 }
 
 type ciProfile struct {
@@ -113,7 +122,10 @@ type ciGroup struct {
 
 // NewClassIsland 创建课表联动。
 func NewClassIsland(cfg config.ClassIslandConfig, subjects []string, manual []config.TimetableEntry) *ClassIslandProvider {
-	return &ClassIslandProvider{cfg: cfg, subjects: subjects, manual: manual}
+	return &ClassIslandProvider{
+		cfg: cfg, subjects: subjects, manual: manual,
+		pluginClient: &http.Client{Timeout: 400 * time.Millisecond},
+	}
 }
 
 // Update 更新配置。
@@ -150,6 +162,11 @@ func (p *ClassIslandProvider) State() ClassState {
 		st.Detected = true
 		st.Monitored = p.monitored(st.Current)
 		return st
+	}
+
+	// 注入插件优先：能拿到实时状态时刷新缓存（失败不影响文件解析）。
+	if cfg.Enabled {
+		_, _ = p.probePlugin(false)
 	}
 
 	p.mu.Lock()
@@ -194,9 +211,13 @@ func (p *ClassIslandProvider) DataDir() string {
 		}
 	}
 	if dir := capture.FindProcessDir("ClassIsland.exe", "ClassIsland.Desktop.exe", "ClassIsland.Desktop"); dir != "" {
-		d := filepath.Join(dir, "data")
-		if st, err := os.Stat(d); err == nil && st.IsDir() {
-			return d
+		// 便携版的 data 在启动器所在目录；Desktop.exe 在 app-x.y.z 子目录里，
+		// 所以要同时检查自身目录和上一级目录。
+		for _, base := range []string{dir, filepath.Dir(dir)} {
+			d := filepath.Join(base, "data")
+			if st, err := os.Stat(filepath.Join(d, "Profiles")); err == nil && st.IsDir() {
+				return d
+			}
 		}
 	}
 	candidates := []string{}
@@ -337,6 +358,38 @@ func (p *ClassIslandProvider) compute(now time.Time) ClassState {
 		} else {
 			st.Error = "未读取到课表，可在设置中手动指定 ClassIsland 数据目录"
 		}
+	}
+	if p.pluginOK && now.Sub(p.pluginAt) < 5*time.Second {
+		ps := p.pluginLast
+		st.Plugin = true
+		st.Detected = true
+		st.Running = true
+		st.InClass = ps.InClass
+		st.Preparing = ps.Preparing
+		st.Source = "plugin"
+		st.Current = nil
+		if ps.InClass && ps.Subject != "" {
+			l := Lesson{Subject: ps.Subject}
+			if t, ok := parseClock(now, ps.Start); ok {
+				l.Start = t
+			}
+			if t, ok := parseClock(now, ps.End); ok {
+				l.End = t
+			}
+			st.Current = &l
+		}
+		st.Next = nil
+		if !ps.InClass && ps.Next != "" {
+			l := Lesson{Subject: ps.Next}
+			if t, ok := parseClock(now, ps.NextStart); ok {
+				l.Start = t
+			}
+			st.Next = &l
+		}
+		if ps.ClassName != "" {
+			st.Profile = ps.ClassName + "（注入）"
+		}
+		st.Hint = ""
 	}
 	st.Monitored = p.monitored(st.Current)
 	return st

@@ -213,6 +213,31 @@ function bind() {
       onDone();
     } catch (e) { toast(e.message, 'err'); }
   });
+
+  // ClassIsland 注入插件
+  $('#ci-install')?.addEventListener('click', async () => {
+    try {
+      const d = await api.post('/api/integrations/classisland/install', {});
+      toast(d.plugin?.installed ? '插件已安装，重启 ClassIsland 后生效' : '已写入插件文件', 'ok');
+      loadEnv();
+    } catch (e) { toast(e.message, 'err'); }
+  });
+  $('#ci-test')?.addEventListener('click', async () => {
+    try {
+      const d = await api.get('/api/integrations/classisland/plugin');
+      if (d.running) toast(`已连接 ClassIsland · ${d.state?.inClass ? '上课中 ' + d.state.subject : '当前无课'}`, 'ok');
+      else toast(d.error || '插件未运行', 'err');
+      loadEnv();
+    } catch (e) { toast(e.message, 'err'); }
+  });
+  $('#ci-dir')?.addEventListener('click', async () => {
+    try {
+      const d = await api.get('/api/integrations/classisland/plugin');
+      if (!d.pluginsDir) throw new Error('未找到插件目录');
+      await navigator.clipboard.writeText(d.pluginsDir);
+      toast('插件目录已复制', 'ok');
+    } catch (e) { toast(e.message, 'err'); }
+  });
 }
 
 function bindVoice() {
@@ -258,7 +283,11 @@ async function loadEnv() {
   const box = $('#env-list');
   box.innerHTML = '<div class="side-empty">检测中…</div>';
   try {
-    const [env, integ] = await Promise.all([api.get('/api/env'), api.get('/api/integrations/status')]);
+    const [env, integ, plug] = await Promise.all([
+      api.get('/api/env'),
+      api.get('/api/integrations/status'),
+      api.get('/api/integrations/classisland/plugin').catch(() => ({})),
+    ]);
     box.innerHTML = '';
     for (const it of env.items || []) {
       const dot = it.ok ? 'ok' : (it.optional ? 'warn' : 'err');
@@ -284,6 +313,19 @@ async function loadEnv() {
     $('#icc-hint').textContent = icc.pluginInstalled
       ? '桥接插件已安装。重启 ICC 后生效；未注入时仍可通过系统接口检测放映。'
       : '注入桥接插件后，ICC 的放映与翻页事件会实时推送过来；未注入时仍可通过系统接口检测放映。';
+
+    const ciBox = $('#ci-box');
+    if (ciBox) {
+      const ci = integ.classIsland || {};
+      ciBox.hidden = !(plug?.installed || ci.detected);
+      $('#ci-tag').textContent = plug?.installed ? (plug.running ? '已连接' : '已安装 · 未运行') : '未安装';
+      $('#ci-tag').className = 'tag' + (plug?.running ? ' on' : '');
+      $('#ci-hint').textContent = plug?.running
+        ? `ClassIsland 正在推送课堂状态${plug.state?.inClass ? '（当前：' + plug.state.subject + '）' : ''}。`
+        : plug?.installed
+          ? '插件已安装，重启 ClassIsland 后会加载；加载后课堂状态会实时注入。'
+          : '把联动插件装进 ClassIsland 后，上课/下课与当前科目会实时推送，还能让 ClassIsland 弹出课堂提醒。';
+    }
   } catch (e) {
     box.innerHTML = `<div class="side-empty">检测失败：${esc(e.message)}</div>`;
   }

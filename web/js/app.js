@@ -3,7 +3,7 @@ import { applyTheme as applyThemeVars, themeLabel } from './theme.js';
 import { $, $$, el, toast, esc, md, fmtTime, fmtDate, fmtDur } from './util.js';
 import { startOnboarding } from './onboarding.js';
 import { openSettings } from './settings.js';
-import { openMarket } from './market.js';
+import { initStores, renderPlugins, renderThemes } from './store.js';
 
 export const S = {
   boot: null,
@@ -11,14 +11,18 @@ export const S = {
   status: null,
   session: null,
   view: 'live',
+  page: 'home',
   live: false,
   cards: new Map(),
   themeIndex: 0,
   asking: false,
+  agentAsking: false,
+  agentMsgs: [],
   timers: [],
 };
 
 const VIEW_TITLE = { live: '课堂实录', history: '历史课堂', timetable: '今日课表' };
+const PAGE_TITLE = { home: '课堂实录', agent: 'Agent 对话', plugins: '插件商城', themes: '主题商店' };
 
 /* ---------------- 启动 ---------------- */
 
@@ -53,6 +57,8 @@ async function reloadBoot() {
 function enterApp() {
   $('#onboarding').hidden = true;
   $('#app').hidden = false;
+  initStores(S);
+  applyRailState(!!S.cfg?.ui?.sidebarCollapsed);
   connectEvents(handlers);
   refreshStatus();
   loadSessions();
@@ -64,6 +70,36 @@ function enterApp() {
   }
   S.timers.push(setInterval(refreshStatus, 2000));
   S.timers.push(setInterval(() => { if (S.live) refreshLiveSession(); }, 6000));
+}
+
+/* ---------------- 右侧导航 ---------------- */
+
+function applyRailState(collapsed) {
+  const app = $('#app');
+  app.classList.toggle('rail-collapsed', collapsed);
+  const btn = $('#rail-toggle');
+  if (btn) {
+    btn.title = collapsed ? '展开侧边栏' : '收拢侧边栏';
+    btn.setAttribute('aria-expanded', String(!collapsed));
+  }
+}
+
+function toggleRail() {
+  const collapsed = !$('#app').classList.contains('rail-collapsed');
+  applyRailState(collapsed);
+  S.cfg.ui.sidebarCollapsed = collapsed;
+  saveConfig(true);
+}
+
+function setPage(page) {
+  S.page = page;
+  $('#app').dataset.page = page;
+  $$('.rail-item[data-page], .rail-group[data-page]').forEach((b) => b.classList.toggle('active', b.dataset.page === page));
+  $$('.view').forEach((sec) => { sec.hidden = sec.id !== 'view-' + (page === 'home' ? S.view : page); });
+  $('#page-title').textContent = page === 'home' ? (VIEW_TITLE[S.view] || '课堂实录') : (PAGE_TITLE[page] || 'ClassNote');
+  if (page === 'agent') renderAgentPage();
+  if (page === 'plugins') renderPlugins();
+  if (page === 'themes') renderThemes();
 }
 
 /* ---------------- 主题 ---------------- */
@@ -180,6 +216,7 @@ function renderStatus(d) {
   }
   const emptyEl = $('#empty-state');
   if (emptyEl) emptyEl.style.display = running || (S.session && S.session.segments?.length) ? 'none' : '';
+  if (S.page === 'agent') agentContext();
 }
 
 async function refreshLiveSession() {
@@ -216,7 +253,7 @@ function emptyState() {
   return el('div', { class: 'empty-state', id: 'empty-state' }, [
     el('div', { class: 'empty-art', html: `<svg viewBox="0 0 96 96" fill="none"><rect x="10" y="18" width="76" height="54" rx="7" stroke="currentColor" stroke-width="2"/><path d="M24 34h32M24 45h22M24 56h15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="70" cy="52" r="10" stroke="currentColor" stroke-width="2"/><path d="M70 47v5l3.5 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>` }),
     el('h3', { text: '还没有开始记录' }),
-    el('p', { text: '当 ClassIsland 显示语文课上课时，会自动开始；也可以点击左上角「开始记录」。' }),
+    el('p', { text: '当 ClassIsland 显示上课时，会自动开始；也可以点击右侧「开始记录」。' }),
     el('div', { class: 'empty-actions' }, [
       el('button', { class: 'btn primary', onclick: toggleLesson }, '立即开始'),
       el('button', { class: 'btn', onclick: () => openSettings(S) }, '检查集成'),
@@ -503,19 +540,24 @@ async function loadSessions() {
     const d = await api.get('/api/sessions');
     const list = $('#session-list');
     const items = d.sessions || [];
-    if (!items.length) { list.innerHTML = '<div class="side-empty">还没有课堂记录</div>'; return; }
-    list.innerHTML = '';
-    for (const s of items.slice(0, 40)) {
-      const item = el('div', { class: 'session-item', dataset: { id: s.id } }, [
-        el('div', { class: 's-top' }, [
-          el('span', { class: 's-subj', text: s.title || s.subject }),
-          el('span', { class: 's-date', text: fmtDate(s.startedAt) }),
-        ]),
-        el('div', { class: 's-meta', text: `${s.slides || 0} 片段 · ${s.words || 0} 字${s.hasReport ? ' · 有报告' : ''}` }),
-      ]);
-      item.addEventListener('click', () => openSession(s.id));
-      if (S.session?.id === s.id) item.classList.add('active');
-      list.append(item);
+    if (list) {
+      if (!items.length) {
+        list.innerHTML = '<div class="side-empty">还没有课堂记录</div>';
+      } else {
+        list.innerHTML = '';
+        for (const s of items.slice(0, 40)) {
+          const item = el('div', { class: 'session-item', dataset: { id: s.id } }, [
+            el('div', { class: 's-top' }, [
+              el('span', { class: 's-subj', text: s.title || s.subject }),
+              el('span', { class: 's-date', text: fmtDate(s.startedAt) }),
+            ]),
+            el('div', { class: 's-meta', text: `${s.slides || 0} 片段 · ${s.words || 0} 字${s.hasReport ? ' · 有报告' : ''}` }),
+          ]);
+          item.addEventListener('click', () => openSession(s.id));
+          if (S.session?.id === s.id) item.classList.add('active');
+          list.append(item);
+        }
+      }
     }
     renderHistory(items);
   } catch (e) { /* ignore */ }
@@ -593,27 +635,31 @@ async function openSession(id) {
 function renderToday(ci) {
   const box = $('#today-list');
   const today = ci?.today || [];
-  $('#today-date').textContent = fmtDate(new Date());
+  const dateEl = $('#today-date');
+  if (dateEl) dateEl.textContent = fmtDate(new Date());
   if (!today.length) {
     const hint = ci?.hint || '';
-    box.innerHTML = `<div class="side-empty">${esc(hint || '未读取到课表')}</div>`;
-    $('#timetable-body').innerHTML = ci?.error
+    if (box) box.innerHTML = `<div class="side-empty">${esc(hint || '未读取到课表')}</div>`;
+    const tb = $('#timetable-body');
+    if (tb) tb.innerHTML = ci?.error
       ? `<div class="side-empty">${esc(ci.error)}</div>`
       : `<div class="side-empty">${esc(hint || '今天没有课')}<br><span style="color:var(--ink-3);font-size:12px">课表来源：ClassIsland · ${esc(ci?.profile || '默认档案')}</span></div>`;
     return;
   }
   const now = Date.now();
-  box.innerHTML = '';
-  for (const l of today) {
-    const start = new Date(l.start).getTime();
-    const end = new Date(l.end).getTime();
-    const isNow = now >= start && now < end;
-    const past = now >= end;
-    box.append(el('div', { class: `lesson-row${isNow ? ' now' : past ? ' past' : ''}` }, [
-      el('span', { class: 'time', text: fmtTime(l.start) }),
-      el('span', { class: 'subj', text: l.subject }),
-      isNow ? el('span', { class: 'badge', text: '上课' }) : null,
-    ]));
+  if (box) {
+    box.innerHTML = '';
+    for (const l of today) {
+      const start = new Date(l.start).getTime();
+      const end = new Date(l.end).getTime();
+      const isNow = now >= start && now < end;
+      const past = now >= end;
+      box.append(el('div', { class: `lesson-row${isNow ? ' now' : past ? ' past' : ''}` }, [
+        el('span', { class: 'time', text: fmtTime(l.start) }),
+        el('span', { class: 'subj', text: l.subject }),
+        isNow ? el('span', { class: 'badge', text: '上课' }) : null,
+      ]));
+    }
   }
   const table = el('table', { class: 'tl-table' });
   for (const l of today) {
@@ -627,18 +673,116 @@ function renderToday(ci) {
     ]);
     table.append(tr);
   }
-  $('#timetable-body').innerHTML = '';
-  $('#timetable-body').append(table);
-  $('#timetable-source').textContent = `来源：${ci.source === 'profile' ? 'ClassIsland 课表' : ci.source === 'manual' ? '手动课表' : ci.source}`;
+  const tbody = $('#timetable-body');
+  if (tbody) {
+    tbody.innerHTML = '';
+    tbody.append(table);
+  }
+  const src = $('#timetable-source');
+  if (src) {
+    const map = { profile: 'ClassIsland 课表', manual: '手动课表', plugin: 'ClassIsland 注入插件', push: '外部推送' };
+    src.textContent = `来源：${map[ci.source] || ci.source}`;
+  }
 }
 
-/* ---------------- 视图切换 ---------------- */
+/* ---------------- Agent 页 ---------------- */
+
+function agentContext() {
+  const ci = S.status?.classIsland;
+  const st = S.status?.status;
+  const bits = [];
+  if (S.session) {
+    const live = S.live || st?.running;
+    bits.push(`<span class="tag">${live ? '本课记录' : '课堂回顾'} · ${esc(S.session.subject || '课堂')}</span>`);
+    if (S.session.segments?.length) bits.push(`<span>${S.session.segments.length} 个片段</span>`);
+  } else {
+    bits.push('<span class="tag">通用模式</span>');
+  }
+  if (ci?.inClass && ci.subject) bits.push(`<span>ClassIsland · 正在上 ${esc(ci.subject)}</span>`);
+  const model = S.cfg?.agent?.model || S.cfg?.provider?.model || '跟随模型设置';
+  bits.push(`<span>模型 <b>${esc(model)}</b></span>`);
+  const perm = { all: '全部访问', remind: '敏感操作提醒', review: '全部人工审查' }[S.cfg?.agent?.permission || 'remind'];
+  bits.push(`<span>权限 <b>${perm}</b></span>`);
+  const box = $('#agent-context');
+  if (box) box.innerHTML = bits.join('<span style="opacity:.35">·</span>');
+}
+
+function renderAgentPage() {
+  agentContext();
+  const thread = $('#agent-thread');
+  if (!thread) return;
+  thread.innerHTML = '';
+  const msgs = S.session?.messages || S.agentMsgs;
+  if (!msgs.length) return;
+  for (const m of msgs) appendAgentMsg(m.role, m.content, false);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function appendAgentMsg(role, text, tmp) {
+  const thread = $('#agent-thread');
+  if (!thread) return null;
+  const b = el('div', { class: 'agent-msg ' + (role === 'user' ? 'user' : 'assistant') + (tmp ? ' pending' : '') });
+  b.innerHTML = `<span class="who">${role === 'user' ? '你' : 'Agent'}</span>` + (role === 'user' ? esc(text) : md(text));
+  thread.append(b);
+  thread.scrollTop = thread.scrollHeight;
+  return b;
+}
+
+async function askAgent() {
+  const input = $('#agent-input');
+  const q = (input?.value || '').trim();
+  if (!q || S.agentAsking) return;
+  S.agentAsking = true;
+  const btn = $('#btn-agent-send');
+  if (btn) btn.disabled = true;
+  input.value = '';
+  input.style.height = 'auto';
+  appendAgentMsg('user', q);
+  const thinking = appendAgentMsg('assistant', '正在结合课堂内容思考…', true);
+  try {
+    let answer = '';
+    if (S.session && S.live) {
+      const d = await api.post('/api/lesson/ask', { question: q });
+      answer = d.answer;
+      thinking?.remove();
+      await refreshLiveSession();
+      renderAgentPage();
+    } else {
+      const d = await api.post('/api/agent/chat', {
+        question: q,
+        sessionId: S.session?.id || '',
+        history: S.agentMsgs.slice(-12),
+      });
+      answer = d.answer;
+      const now = new Date().toISOString();
+      if (S.session) {
+        S.session.messages = S.session.messages || [];
+        S.session.messages.push({ role: 'user', content: q, createdAt: now });
+        S.session.messages.push({ role: 'assistant', content: answer, createdAt: now });
+      } else {
+        S.agentMsgs.push({ role: 'user', content: q, createdAt: now });
+        S.agentMsgs.push({ role: 'assistant', content: answer, createdAt: now });
+      }
+      thinking?.remove();
+      renderAgentPage();
+    }
+  } catch (e) {
+    if (thinking) thinking.innerHTML = `<span class="who">Agent</span><span style="color:var(--danger)">${esc(e.message)}</span>`;
+  } finally {
+    S.agentAsking = false;
+    if (btn) btn.disabled = false;
+    input?.focus();
+  }
+}
+
+
 
 function setView(v) {
   S.view = v;
-  $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === v));
-  $$('.view').forEach((sec) => { sec.hidden = sec.id !== 'view-' + v; });
-  $('#page-title').textContent = VIEW_TITLE[v] || '课堂实录';
+  $$('.rail-sub-item').forEach((b) => b.classList.toggle('active', b.dataset.view === v));
+  $$('#view-switch button').forEach((b) => b.classList.toggle('active', b.dataset.view === v));
+  $$('.view').forEach((sec) => { sec.hidden = sec.id !== 'view-' + v || S.page !== 'home'; });
+  if (S.page === 'home') $('#page-title').textContent = VIEW_TITLE[v] || '课堂实录';
   if (v === 'history') loadSessions();
   if (v === 'timetable') renderToday(S.status?.classIsland);
 }
@@ -668,6 +812,7 @@ const handlers = {
     renderTimeline(data);
     renderInspector(data);
     loadSessions();
+    if (S.page === 'agent') renderAgentPage();
   },
   session_ended(data) {
     S.session = data;
@@ -676,6 +821,7 @@ const handlers = {
     renderInspector(data);
     refreshStatus();
     loadSessions();
+    if (S.page === 'agent') renderAgentPage();
     toast('课堂已结束，可生成报告', 'ok');
   },
   slide(data) {
@@ -741,9 +887,47 @@ function bindGlobal() {
   $('#btn-report').addEventListener('click', makeReport);
   $('#btn-ask').addEventListener('click', ask);
   $('#btn-settings').addEventListener('click', () => openSettings(S));
-  $('#btn-market').addEventListener('click', () => openMarket(S));
   $('#btn-theme').addEventListener('click', cycleTheme);
   $('#btn-zoom').addEventListener('click', () => { const i = $('#slide-img'); if (i.src) openLightbox(i.src); });
+
+  // 右侧导航
+  $('#rail-toggle').addEventListener('click', toggleRail);
+  $('#rail-home').addEventListener('click', () => {
+    if (S.page === 'home') {
+      $('#rail-home').classList.toggle('closed');
+      return;
+    }
+    setPage('home');
+  });
+  $$('.rail-item[data-page]').forEach((b) => b.addEventListener('click', () => setPage(b.dataset.page)));
+  $$('.rail-sub-item').forEach((b) => b.addEventListener('click', () => {
+    if (S.page !== 'home') setPage('home');
+    setView(b.dataset.view);
+  }));
+  $$('#view-switch button').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+
+  // Agent 页
+  $('#btn-agent-send')?.addEventListener('click', askAgent);
+  $('#btn-agent-clear')?.addEventListener('click', () => {
+    if (S.session) { toast('本课对话保存在课堂记录里，不会在这里清空'); return; }
+    S.agentMsgs = [];
+    renderAgentPage();
+  });
+  $$('#agent-suggest button').forEach((b) => b.addEventListener('click', () => {
+    const input = $('#agent-input');
+    if (!input) return;
+    input.value = b.dataset.q || b.textContent;
+    askAgent();
+  }));
+  const agentInput = $('#agent-input');
+  agentInput?.addEventListener('input', () => {
+    agentInput.style.height = 'auto';
+    agentInput.style.height = Math.min(120, agentInput.scrollHeight) + 'px';
+  });
+  agentInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askAgent(); }
+  });
+
   $('#btn-utterance')?.addEventListener('click', async () => {
     const text = window.prompt('补录一段课堂转写（会归入当前这一页）：');
     if (!text || !text.trim()) return;
@@ -751,8 +935,6 @@ function bindGlobal() {
     catch (e) { toast(e.message, 'err'); }
   });
   $('#lightbox').addEventListener('click', () => { $('#lightbox').hidden = true; });
-
-  $$('.nav-item').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
 
   const input = $('#ask-input');
   input.addEventListener('input', () => {

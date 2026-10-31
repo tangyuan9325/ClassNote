@@ -2,6 +2,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -149,12 +150,17 @@ func (s *Server) routes() {
 	m.HandleFunc("/api/plugins/market", s.handlePluginMarket)
 	m.HandleFunc("/api/plugins/install", s.handlePluginInstall)
 	m.HandleFunc("/api/agent/info", s.handleAgentInfo)
+	m.HandleFunc("/api/agent/chat", s.handleAgentChat)
 	m.HandleFunc("/api/agent/permission", s.handleAgentPermission)
 	m.HandleFunc("/api/integrations/status", s.handleIntegrations)
 	m.HandleFunc("/api/integrations/icc/inject", s.handleICCInject)
 	m.HandleFunc("/api/integrations/icc/eject", s.handleICCEject)
 	m.HandleFunc("/api/integrations/icc/event", s.handleICCEvent)
 	m.HandleFunc("/api/integrations/classisland/state", s.handleCIPush)
+	m.HandleFunc("/api/integrations/classisland/plugin", s.handleCIPlugin)
+	m.HandleFunc("/api/integrations/classisland/install", s.handleCIPluginInstall)
+	m.HandleFunc("/api/integrations/classisland/uninstall", s.handleCIPluginUninstall)
+	m.HandleFunc("/api/integrations/classisland/notify", s.handleCIPluginNotify)
 	m.HandleFunc("/api/events/test", s.handleEventTest)
 	m.HandleFunc("/api/shutdown", s.handleShutdown)
 	m.HandleFunc("/api/open", s.handleOpen)
@@ -308,7 +314,7 @@ func (s *Server) Listen(preferred int) (int, error) {
 		addr = ln.Addr().String()
 		go func() {
 			srv := &http.Server{
-				Handler:           s.mux,
+				Handler:           s.authMiddleware(s.mux),
 				ReadHeaderTimeout: 10 * time.Second,
 			}
 			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -319,6 +325,66 @@ func (s *Server) Listen(preferred int) (int, error) {
 		return p, nil
 	}
 	return 0, fmt.Errorf("找不到可用端口")
+}
+
+// authMiddleware 保护局域网访问：本机回环地址直接放行，其他来源必须携带访问密钥。
+// 密钥可以放在 X-ClassNote-Token 头、?token= 查询参数或 cn_token Cookie 里；
+// 用 ?token= 打开页面后会写入 Cookie，后续静态资源与 SSE 都能自动带上。
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimSpace(s.cfg.Get().Server.Token)
+		if token == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if isLoopback(r.RemoteAddr) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		got := r.Header.Get("X-ClassNote-Token")
+		fromQuery := false
+		if got == "" {
+			got = r.URL.Query().Get("token")
+			fromQuery = got != ""
+		}
+		if got == "" {
+			if c, err := r.Cookie("cn_token"); err == nil {
+				got = c.Value
+			}
+		}
+		if !secureEqual(got, token) {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				writeErr(w, http.StatusUnauthorized, fmt.Errorf("访问密钥无效，请使用带 token 的链接"))
+			} else {
+				http.Error(w, "访问密钥无效，请使用带 token 的链接", http.StatusUnauthorized)
+			}
+			return
+		}
+		if fromQuery {
+			http.SetCookie(w, &http.Cookie{
+				Name: "cn_token", Value: token, Path: "/",
+				MaxAge: 30 * 24 * 3600, HttpOnly: true, SameSite: http.SameSiteLaxMode,
+			})
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isLoopback(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	host = strings.Trim(host, "[]")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func secureEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 // Port 返回监听端口。
