@@ -300,7 +300,7 @@ func LocalTranscribe(ctx context.Context, port int, wav []byte, language string)
 	if err := mw.Close(); err != nil {
 		return "", err
 	}
-	reqCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost,
 		fmt.Sprintf("http://127.0.0.1:%d/inference", port), &body)

@@ -21,11 +21,12 @@ import (
 
 // WebClient 通过浏览器自动化使用网页版 AI（DeepSeek / 通义千问）。
 type WebClient struct {
-	cfg  config.WebAIConfig
-	mu   sync.Mutex
-	br   *rod.Browser
-	temp bool
-	dir  string
+	subject string
+	cfg     config.WebAIConfig
+	mu      sync.Mutex
+	br      *rod.Browser
+	temp    bool
+	dir     string
 }
 
 // SitePreset 是网页版站点的默认选择器。
@@ -164,6 +165,44 @@ func (c *WebClient) Chat(ctx context.Context, msgs []Message, opt Options) (*Res
 	return c.Stream(ctx, msgs, opt, nil)
 }
 
+// newChat 点击“新对话”，开始一条干净的会话。
+func newChat(page *rod.Page) {
+	js := `() => {
+		const sels = ['button[class*=new-chat]', 'a[class*=new-chat]', '[data-testid*=new-chat]',
+			'button[aria-label*="New chat"]', 'button[aria-label*="新对话"]', 'div[class*=new-chat]'];
+		for (const s of sels) {
+			const b = document.querySelector(s);
+			if (b) { b.click(); return s; }
+		}
+		// 退而求其次：找文字为「新对话 / New chat」的按钮
+		for (const b of document.querySelectorAll('button, a, div[role=button]')) {
+			const t = (b.innerText || '').trim();
+			if (t === '新对话' || t === 'New chat' || t === '新建对话') { b.click(); return 'text:' + t; }
+		}
+		return '';
+	}`
+	res, err := page.Eval(js)
+	if err == nil && res.Value.Str() != "" {
+		logx.Debugf("webai", "已新建对话（%s）", res.Value.Str())
+		time.Sleep(900 * time.Millisecond)
+	}
+}
+
+// subjectChat 确保当前对话属于指定学科：换学科时开一条新对话。
+// 同学科复用同一条，历史记录里每门课只有一条，不再堆垃圾。
+func (c *WebClient) subjectChat(page *rod.Page, subject string) {
+	c.mu.Lock()
+	last := c.subject
+	c.mu.Unlock()
+	if subject == "" || subject == last {
+		return
+	}
+	newChat(page)
+	c.mu.Lock()
+	c.subject = subject
+	c.mu.Unlock()
+}
+
 // Stream 网页版没有真正的流式接口，这里用轮询模拟。
 func (c *WebClient) Stream(ctx context.Context, msgs []Message, opt Options, onDelta func(string)) (*Result, error) {
 	dir := c.dir
@@ -196,6 +235,8 @@ func (c *WebClient) Stream(ctx context.Context, msgs []Message, opt Options, onD
 	// 单页应用还需要时间渲染出输入框与会话容器。
 	time.Sleep(2600 * time.Millisecond)
 	dismissPopup(page)
+	// 每门学科一条独立对话历史，避免把垃圾堆满侧边栏。
+	c.subjectChat(page, opt.Subject)
 
 	inputSel := c.sel("input", "textarea")
 	el, err := page.Timeout(20 * time.Second).Element(inputSel)
@@ -208,6 +249,9 @@ func (c *WebClient) Stream(ctx context.Context, msgs []Message, opt Options, onD
 	_ = el.Click(proto.InputMouseButtonLeft, 1)
 
 	prompt, images := flatten(msgs)
+	if opt.FollowUp {
+		prompt = slimPrompt(prompt)
+	}
 	if len(images) > 0 {
 		if fileSel := c.sel("file", "input[type=file]"); fileSel != "" {
 			if fi, err := page.Element(fileSel); err == nil {
@@ -606,6 +650,27 @@ func countCJK(s string) int {
 		}
 	}
 	return n
+}
+
+// slimPrompt 同一条对话里的后续提问：去掉重复的背景与要求说明，
+// 只留本页要分析的内容（对话上下文里已经有前面的铺垫）。
+func slimPrompt(p string) string {
+	// 系统要求段落只保留一次（首条已经发过），这里整段去掉。
+	if i := strings.Index(p, "【任务】"); i > 0 {
+		p = p[i:]
+	}
+	// 裁掉重复的字段说明
+	lines := strings.Split(p, "\n")
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "你是") || strings.HasPrefix(t, "【要求】") ||
+			strings.HasPrefix(t, "输出格式") || strings.HasPrefix(t, "【上一轮回答】") {
+			continue
+		}
+		out = append(out, l)
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
 }
 
 // flatten 把消息压平成一段提示词，并把图片写入临时文件供上传。

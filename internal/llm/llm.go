@@ -65,6 +65,12 @@ type Options struct {
 	MaxTokens   int
 	JSON        bool
 	TimeoutSec  int
+	// Subject 当前学科：网页版用它区分对话历史，同学科共用一条、
+	// 换学科自动开新对话，避免历史记录里堆满垃圾。
+	Subject string
+	// FollowUp 同一条对话里的后续提问：网页版可以精简提示词，
+	// 不再重复工具与背景说明（对话上下文里已经有了）。
+	FollowUp bool
 }
 
 // Usage 统计 token 消耗。

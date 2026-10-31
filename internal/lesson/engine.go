@@ -72,6 +72,7 @@ type Engine struct {
 	client      llm.Client
 	asrCli      *asr.Transcriber
 	skillPrompt string
+	lastSubject string
 	emitFn      func(Event)
 
 	sess      *store.Session
@@ -861,7 +862,11 @@ func (e *Engine) analyze(segID string) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
 	defer cancel()
-	res, err := client.Chat(ctx, msgs, llm.Options{Temperature: 0.3, MaxTokens: 2048, JSON: true})
+	e.mu.Lock()
+	followUp := e.lastSubject == subject && subject != ""
+	e.lastSubject = subject
+	e.mu.Unlock()
+	res, err := client.Chat(ctx, msgs, llm.Options{Subject: subject, FollowUp: followUp, Temperature: 0.3, MaxTokens: 2048, JSON: true})
 	if err != nil {
 		logx.Warnf("lesson", "分析失败: %v", err)
 		e.mu.Lock()
@@ -1009,7 +1014,7 @@ func (e *Engine) Ask(question string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	res, err := client.Chat(ctx, msgs, llm.Options{Temperature: 0.4, MaxTokens: 2048})
+	res, err := client.Chat(ctx, msgs, llm.Options{Subject: sess.Subject, Temperature: 0.4, MaxTokens: 2048})
 	if err != nil {
 		return "", err
 	}
