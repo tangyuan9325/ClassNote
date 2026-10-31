@@ -120,6 +120,8 @@ type FloatBall struct {
 	expanded bool
 	anim     int // 0..fbAnimFrames，0=收起
 	status   FloatBallStatus
+	x, y     int32 // 窗口左上角（物理像素），展开时靠右边缘定位
+	winW     int32 // 当前窗口宽度，用于展开/收拢时保持右边缘
 
 	// 拖动状态：按下记录偏移，移动时跟手；位移超过阈值才算拖动，否则视为点击。
 	dragging   bool
@@ -138,7 +140,7 @@ var fbInst *FloatBall
 
 // NewFloatBall 创建悬浮球。
 func NewFloatBall(opts FloatBallOptions) *FloatBall {
-	return &FloatBall{opts: opts, ready: make(chan struct{}), done: make(chan struct{})}
+	return &FloatBall{opts: opts, ready: make(chan struct{}), done: make(chan struct{}), winW: 64}
 }
 
 // Start 启动悬浮球（异步）。
@@ -218,6 +220,9 @@ func (f *FloatBall) run() {
 		initRect.L, initRect.T, initRect.R-initRect.L, initRect.B-initRect.T, sw, sh)
 	f.mu.Lock()
 	f.hwnd = windows.Handle(hwnd)
+	f.x = int32(x)
+	f.y = int32(y)
+	f.winW = 64
 	f.mu.Unlock()
 
 	procFBSetTimer.Call(hwnd, fbTimerRender, 66, 0) // ~15fps 动画
@@ -260,6 +265,8 @@ func fbWndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 				if abs32(cp.X-f.dragStartX) > 3 || abs32(cp.Y-f.dragStartY) > 3 {
 					f.dragMoved = true
 				}
+				f.x = nx
+				f.y = ny
 				f.mu.Unlock()
 				procFBSetWindowPos.Call(hwnd, 0, uintptr(uint32(nx)), uintptr(uint32(ny)),
 					0, 0, swpNoSize|swpNoActivate|swpShowWindow)
@@ -443,12 +450,18 @@ func (f *FloatBall) present(hwnd windows.Handle, img *image.RGBA) {
 		memDC, uintptr(unsafe.Pointer(&srcPt)), 0,
 		uintptr(unsafe.Pointer(&bf)), ulwAlpha)
 
-	// 尺寸变化时同步窗口大小
-	var rect struct{ L, T, R, B int32 }
-	procFBGetClientRect.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&rect)))
-	if rect.R != w || rect.B != h {
-		procFBSetWindowPos.Call(uintptr(hwnd), 0, 0, 0,
-			uintptr(w), uintptr(h), swpNoMove|swpNoActivate|swpShowWindow)
+	// 尺寸变化时保持右边缘不动，向左长出来；否则停靠在右上角的球
+	// 展开后会被屏幕右边裁掉。位置由 f.x/f.y 维护，避免 DPI 下
+	// GetWindowRect 返回 0,0 把窗口挪到左上角。
+	if int32(w) != f.winW {
+		f.x -= int32(w) - f.winW
+		if f.x < 0 {
+			f.x = 0
+		}
+		logx.Infof("float", "悬浮球尺寸 %d→%d，位置 %d,%d", f.winW, w, f.x, f.y)
+		procFBSetWindowPos.Call(uintptr(hwnd), 0, uintptr(uint32(f.x)), uintptr(uint32(f.y)),
+			uintptr(w), uintptr(h), swpNoActivate|swpShowWindow)
+		f.winW = int32(w)
 	}
 }
 
@@ -601,52 +614,117 @@ func drawCircle(img *image.RGBA, cx, cy, r int, c color.RGBA) {
 
 // drawText 用位图字体画简短文字（只支持需要的字符，中文走 GDI 太重，
 // 这里用极简 5x7 点阵覆盖 ASCII，中文字符用方块占位——悬浮球只放短标签）。
+// 悬浮球文字用 GDI 绘制。之前用 5x7 点阵，中文只能画成小方块，
+// 用户看到的就是一排“乱码”；这里改用微软雅黑，和界面字体保持一致。
+var (
+	txtDC   uintptr
+	txtBmp  uintptr
+	txtFont uintptr
+	txtBits unsafe.Pointer
+	txtW    = 240
+	txtH    = 40
+)
+
+func ensureTextGDI() bool {
+	if txtDC != 0 {
+		return true
+	}
+	dc, _, _ := procFBCreateDC.Call(0)
+	if dc == 0 {
+		return false
+	}
+	type bmiHeader struct {
+		Size          uint32
+		Width, Height int32
+		Planes        uint16
+		BitCount      uint16
+		Compression   uint32
+		SizeImage     uint32
+		XPels, YPels  int32
+		ClrUsed       uint32
+		ClrImportant  uint32
+	}
+	type bmi struct {
+		Header bmiHeader
+		Masks  [3]uint32
+	}
+	bi := bmi{Header: bmiHeader{
+		Size: 40, Width: int32(txtW), Height: -int32(txtH), Planes: 1, BitCount: 32,
+		Compression: 0, SizeImage: uint32(txtW * txtH * 4),
+	}}
+	var bits unsafe.Pointer
+	bmp, _, _ := procFBCreateDIB.Call(dc, uintptr(unsafe.Pointer(&bi)), 0,
+		uintptr(unsafe.Pointer(&bits)), 0, 0)
+	if bmp == 0 {
+		procFBDeleteDC.Call(dc)
+		return false
+	}
+	procFBSelectObject.Call(dc, bmp)
+	// -14px，微软雅黑 UI；DEFAULT_CHARSET + ANTIALIASED_QUALITY 保证中文有字。
+	face, _ := windows.UTF16PtrFromString("Microsoft YaHei UI")
+	font, _, _ := procFBCreateFontW.Call(uintptr(0xFFFFFFF2), 0, 0, 0, 500, 0, 0, 0,
+		1, 0, 0, 4, 0, uintptr(unsafe.Pointer(face)))
+	if font == 0 {
+		procFBDeleteObject.Call(bmp)
+		procFBDeleteDC.Call(dc)
+		return false
+	}
+	procFBSelectObject.Call(dc, font)
+	procFBSetBkMode.Call(dc, 1) // TRANSPARENT
+	txtDC, txtBmp, txtFont, txtBits = dc, bmp, font, bits
+	return true
+}
+
 func drawText(img *image.RGBA, x, y int, s string, c color.RGBA) {
-	cx := x
-	for _, r := range s {
-		if r > 127 {
-			// 中文：画一个小方块代替（悬浮球上主要靠图标和颜色表达）
-			drawRounded(img, image.Rect(cx, y+2, cx+10, y+14), 2, c)
-			cx += 12
-			continue
-		}
-		drawGlyph(img, cx, y, byte(r), c)
-		cx += 6
+	if s == "" || c.A == 0 || !ensureTextGDI() {
+		return
 	}
-}
+	buf := unsafe.Slice((*byte)(txtBits), txtW*txtH*4)
+	for i := range buf {
+		buf[i] = 0
+	}
+	u, _ := windows.UTF16FromString(s)
+	if len(u) <= 1 {
+		return
+	}
+	procFBSetTextColor.Call(txtDC, 0xFFFFFF)
+	procFBTextOutW.Call(txtDC, 0, 0, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1))
 
-// drawGlyph 5x7 ASCII 点阵（数字与冒号足够计时用）。
-func drawGlyph(img *image.RGBA, x, y int, ch byte, c color.RGBA) {
-	pat := glyphs[ch]
-	for row := 0; row < 7; row++ {
-		line := pat[row]
-		for col := 0; col < 5; col++ {
-			if line&(1<<(4-col)) != 0 {
-				img.SetRGBA(x+col, y+row, c)
+	// GDI 在透明底上写入的是“覆盖率 × 文字色”，按覆盖率把文字混进胶囊。
+	for row := 0; row < txtH; row++ {
+		for col := 0; col < txtW; col++ {
+			i := (row*txtW + col) * 4
+			cov := buf[i]
+			if buf[i+1] > cov {
+				cov = buf[i+1]
 			}
+			if buf[i+2] > cov {
+				cov = buf[i+2]
+			}
+			if cov == 0 {
+				continue
+			}
+			px, py := x+col, y+row
+			if !image.Pt(px, py).In(img.Bounds()) {
+				continue
+			}
+			bg := img.RGBAAt(px, py)
+			// image.RGBA 存的是预乘 alpha；文字不能超过底色 alpha，
+			// 否则 PNG/分层窗口会因为“颜色 > alpha”出现蓝紫色溢出。
+			ca := c.A
+			if bg.A < ca {
+				ca = bg.A
+			}
+			a := float64(cov) / 255 * float64(ca) / 255
+			img.SetRGBA(px, py, color.RGBA{
+				R: uint8(float64(c.R)*a + float64(bg.R)*(1-a)),
+				G: uint8(float64(c.G)*a + float64(bg.G)*(1-a)),
+				B: uint8(float64(c.B)*a + float64(bg.B)*(1-a)),
+				A: bg.A,
+			})
 		}
 	}
 }
-
-// glyphs 只收录数字、冒号、空格等计时用字符。
-var glyphs = func() map[byte][7]byte {
-	m := map[byte][7]byte{}
-	m[' '] = [7]byte{}
-	m[':'] = [7]byte{0, 0b00100, 0b00100, 0, 0b00100, 0b00100, 0}
-	m['0'] = [7]byte{0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110}
-	m['1'] = [7]byte{0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110}
-	m['2'] = [7]byte{0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111}
-	m['3'] = [7]byte{0b01110, 0b10001, 0b00001, 0b00110, 0b00001, 0b10001, 0b01110}
-	m['4'] = [7]byte{0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010}
-	m['5'] = [7]byte{0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110}
-	m['6'] = [7]byte{0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110}
-	m['7'] = [7]byte{0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000}
-	m['8'] = [7]byte{0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110}
-	m['9'] = [7]byte{0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100}
-	m['C'] = [7]byte{0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110}
-	m['N'] = [7]byte{0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001}
-	return m
-}()
 
 // FloatOpenFolder 打开目录（悬浮球菜单用）。
 func FloatOpenFolder(dir string) error {
