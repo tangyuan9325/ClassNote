@@ -137,6 +137,18 @@ func main() {
 	}
 
 	ci := integration.NewClassIsland(cfg.Integ.ClassIsland, cfg.Lesson.Subjects, cfg.Lesson.ManualTimetable)
+	// 首次通过进程探测到 ClassIsland 数据目录后写回配置，
+	// 这样下次 ClassIsland 没开也能读取课表、识别插件。
+	if dir := ci.DataDir(); dir != "" && cfg.Integ.ClassIsland.DataDir == "" {
+		if _, err := cfgStore.Update(func(c *config.Config) error {
+			c.Integ.ClassIsland.DataDir = dir
+			return nil
+		}); err == nil {
+			cfg.Integ.ClassIsland.DataDir = dir
+			ci.Update(cfg.Integ.ClassIsland, cfg.Lesson.Subjects, cfg.Lesson.ManualTimetable)
+			logx.Infof("classisland", "已记录数据目录 %s", dir)
+		}
+	}
 	icc := integration.NewICCBridge(cfg.Integ.ICC)
 
 	sub, err := fs.Sub(webAssets, "web")
