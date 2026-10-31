@@ -38,6 +38,7 @@ var (
 	procFBGetDC           = fbUser32.NewProc("GetDC")
 	procFBReleaseDC       = fbUser32.NewProc("ReleaseDC")
 	procFBSetWindowPos    = fbUser32.NewProc("SetWindowPos")
+	procFBShowWindow      = fbUser32.NewProc("ShowWindow")
 	procFBSendMessage     = fbUser32.NewProc("SendMessageW")
 	procFBGetCursorPos    = fbUser32.NewProc("GetCursorPos")
 	procFBGetSystemM      = fbUser32.NewProc("GetSystemMetrics")
@@ -79,12 +80,14 @@ const (
 	wsExTopmost    = 0x00000008
 	wsExToolWindow = 0x00000080
 	wsPopup        = 0x80000000
+	wsVisible      = 0x10000000
 
-	ulwAlpha      = 0x00000002
-	swpNoMove     = 0x0002
-	swpNoSize     = 0x0001
-	swpNoActivate = 0x0010
-	swpShowWindow = 0x0040
+	ulwAlpha       = 0x00000002
+	swpNoMove      = 0x0002
+	swpNoSize      = 0x0001
+	swpNoActivate  = 0x0010
+	swpShowWindow  = 0x0040
+	swShowNoActive = 4
 
 	smCxScreen = 0
 	smCyScreen = 1
@@ -195,17 +198,24 @@ func (f *FloatBall) run() {
 
 	// 默认停靠屏幕右上角（可拖动）
 	sw, _, _ := procFBGetSystemM.Call(smCxScreen)
+	sh, _, _ := procFBGetSystemM.Call(smCyScreen)
 	x := int32(sw) - 96
 	y := int32(16)
 
 	hwnd, _, err := procFBCreateWindow.Call(wsExLayered|wsExTopmost|wsExToolWindow,
-		uintptr(unsafe.Pointer(className)), 0, wsPopup,
+		uintptr(unsafe.Pointer(className)), 0, wsPopup|wsVisible,
 		uintptr(x), uintptr(y), 64, 64,
 		0, 0, hInst, 0)
 	if hwnd == 0 {
 		logx.Warnf("float", "创建悬浮球失败: %v", err)
 		return
 	}
+	// 分层窗口要等第一次 UpdateLayeredWindow 才有内容，先不激活地显示出来。
+	procFBShowWindow.Call(hwnd, swShowNoActive)
+	var initRect struct{ L, T, R, B int32 }
+	procFBGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&initRect)))
+	logx.Infof("float", "悬浮球窗口已创建 %d,%d %dx%d（屏幕 %dx%d）",
+		initRect.L, initRect.T, initRect.R-initRect.L, initRect.B-initRect.T, sw, sh)
 	f.mu.Lock()
 	f.hwnd = windows.Handle(hwnd)
 	f.mu.Unlock()
