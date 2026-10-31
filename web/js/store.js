@@ -5,7 +5,7 @@ import { openSettings } from './settings.js';
 
 /**
  * 插件商城 / 主题商店。
- * 两个页面都挂在右侧导航栏，由 app.js 在切换页面时调用 render。
+ * 两个页面都挂在左侧导航栏，由 app.js 在切换页面时调用 render。
  */
 let S = null;
 let plTab = 'market';

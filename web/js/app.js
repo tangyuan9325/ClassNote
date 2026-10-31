@@ -72,7 +72,7 @@ function enterApp() {
   S.timers.push(setInterval(() => { if (S.live) refreshLiveSession(); }, 6000));
 }
 
-/* ---------------- 右侧导航 ---------------- */
+/* ---------------- 左侧导航 ---------------- */
 
 function applyRailState(collapsed) {
   const app = $('#app');
@@ -253,7 +253,7 @@ function emptyState() {
   return el('div', { class: 'empty-state', id: 'empty-state' }, [
     el('div', { class: 'empty-art', html: `<svg viewBox="0 0 96 96" fill="none"><rect x="10" y="18" width="76" height="54" rx="7" stroke="currentColor" stroke-width="2"/><path d="M24 34h32M24 45h22M24 56h15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="70" cy="52" r="10" stroke="currentColor" stroke-width="2"/><path d="M70 47v5l3.5 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>` }),
     el('h3', { text: '还没有开始记录' }),
-    el('p', { text: '当 ClassIsland 显示上课时，会自动开始；也可以点击右侧「开始记录」。' }),
+    el('p', { text: '当 ClassIsland 显示上课时，会自动开始；也可以点击左侧「开始记录」。' }),
     el('div', { class: 'empty-actions' }, [
       el('button', { class: 'btn primary', onclick: toggleLesson }, '立即开始'),
       el('button', { class: 'btn', onclick: () => openSettings(S) }, '检查集成'),
@@ -890,7 +890,7 @@ function bindGlobal() {
   $('#btn-theme').addEventListener('click', cycleTheme);
   $('#btn-zoom').addEventListener('click', () => { const i = $('#slide-img'); if (i.src) openLightbox(i.src); });
 
-  // 右侧导航
+  // 左侧导航
   $('#rail-toggle').addEventListener('click', toggleRail);
   $('#rail-home').addEventListener('click', () => {
     if (S.page === 'home') {

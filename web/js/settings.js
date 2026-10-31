@@ -311,7 +311,7 @@ function appearTab(cfg) {
         <input type="file" id="ct-file" accept="application/json" hidden>
         <span class="hint" id="ct-result"></span>
       </div>
-      <div class="desc" style="margin-top:8px">改动颜色会立即预览；保存后可在上方主题列表选用。社区主题在右侧「主题商店」页。</div>
+      <div class="desc" style="margin-top:8px">改动颜色会立即预览；保存后可在上方主题列表选用。社区主题在左侧「主题商店」页。</div>
     </div>
 
     <h3>显示</h3>
