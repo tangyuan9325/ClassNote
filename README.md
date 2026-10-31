@@ -36,7 +36,8 @@ ClassNote 面向真实的教学环境设计：它不要求教师改变上课习�
 | **ClassIsland 注入插件** | 随包提供 ClassIsland 插件（`classnote.islandbridge`）：上课/下课、当前科目、下一节课实时注入，还能让 ClassIsland 弹出课堂提醒 |
 | **ICC 插件** | 随包提供 `ClassNote.Bridge.dll`，注入后 ICC 的放映状态实时推送到 ClassNote |
 | **系统托盘** | 原生托盘图标：右键开始/结束记录、打开报告目录、状态气泡；图标丢失自动重挂 |
-| **本地语音转写** | whisper.cpp 随包分发、启动即用、完全离线；中文实测可用 |
+| **本地语音转写** | whisper.cpp 随包分发（含 Alder Lake / AVX2 等 CPU 后端），首次启动自动释放到 `C:\ProgramData`，完全离线；4.6 秒中文语音约 3 秒出结果 |
+| **录音批次限制** | 「每批最长（秒）」到达上限时回溯到最近一次句间停顿，把最后一句留到下一批，当前批次立即送转写 |
 | **桌面悬浮球** | 常驻屏幕右上角、可拖动，显示课堂状态与计时，悬停展开，点开主界面 |
 | **右侧导航栏** | 仿 ClassIsland 的右侧竖栏，可展开/收拢；主页 / Agent / 插件商城 / 主题商店 |
 | **局域网访问** | 手机/平板用带密钥的链接访问；密钥随机生成、可改可持久化，非回环请求强制校验 |
@@ -254,7 +255,11 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 2. **ICC 插件与版本绑定。** 插件按 ICC CE 1.7.18.8 的 `EnhancedPluginBaseV2` 接口、.NET Framework 4.7.2 编译，已在真机验证加载、启用、事件推送。ICC 升级到 1.8.x 后接口可能变化，需要按 `integrations/icc-bridge` 里的工程重新编译（`build.ps1` 一条命令）。即使插件不生效，ClassNote 自己的 COM / 窗口检测仍然工作，功能不受影响。
 3. **WPS 的 COM 支持取决于配置。** WPS 需在「配置工具 → 兼容设置」里勾选「WPS Office 兼容第三方系统和软件」，否则拿不到 `KWPP.Application`，此时会退回窗口截图。
 4. **PPT 文本提取只支持 `.pptx`。** 旧的 `.ppt` 二进制格式读不了，会用截图 + 模型看图代替。
-5. **语音转写已随包自带。** whisper.cpp 与 small-q5_1 模型随程序分发，首次启动自动部署到 `C:\ProgramData\ClassNote\whisper`（whisper 是 C 程序、读不懂中文路径，所以要放在 ASCII 目录）并常驻运行，完全离线、无需安装。中文识别对同音字（如「荷塘月色」→「和堂乐色」）仍有误差，属本地小模型的正常水平；要更高精度可换 medium 模型或用云端接口。
+5. **语音转写已随包自带。** whisper.cpp 与 small-q5_1 模型随程序分发，首次启动自动部署到 `C:\ProgramData\ClassNote\whisper`（whisper 是 C 程序、读不懂中文路径，所以要放在 ASCII 目录）并常驻运行，完全离线、无需安装。
+   - 包内带 `ggml-cpu-alderlake / haswell / skylakex …` 等全部 CPU 后端，whisper 会按 CPU 指令集自动挑最快的；只带通用 `x64` 后端会慢约 15 倍。
+   - 实测 i5-1240P：4.6 秒中文语音约 3 秒转写完成；线程数按逻辑核心数自动设置（上限 16）。
+   - 每批录音默认最长 10 秒。到达上限时不会硬切，而是回溯到最近一次句间停顿，把最后一句并入下一批，当前批次立即送转写；持续连读、完全没有停顿时才退回硬切。
+   - 中文识别对同音字（如「荷塘月色」→「和堂乐色」）仍有误差，属本地小模型的正常水平；要更高精度可换 medium 模型或用云端接口。
 6. **DeepSeek 网页版在某些网络下被限流。** 本机 curl 请求 chat.deepseek.com 会返回 429，但真实浏览器可以正常打开登录页；接入流程与千问一致（设置 → 模型 → 网页版 → 登录）。API 模式的 DeepSeek 预设不受影响。
 7. **只在 Windows 上测试。** 代码使用了 Win32 API，macOS / Linux 无法编译。
 
