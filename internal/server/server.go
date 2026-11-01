@@ -48,6 +48,9 @@ type Server struct {
 	started   time.Time
 	notifier  *notify.Notifier
 	plugins   *plugin.Registry
+	ln        net.Listener // 当前监听器；切换局域网开关时需要重绑
+	lnHost    string
+	lnMu      sync.Mutex
 }
 
 // New 创建服务。
@@ -299,11 +302,33 @@ func readJSON(r *http.Request, dst any) error {
 
 // Listen 在空闲端口启动服务，返回实际端口。
 func (s *Server) Listen(preferred int) (int, error) {
-	addr := ""
-	// 开放局域网时监听所有网卡，否则只听本机。
-	host := "127.0.0.1"
+	return s.listenOn(s.listenHost(), preferred)
+}
+
+// listenHost 决定绑定地址：开放局域网时监听所有网卡，否则只听本机。
+func (s *Server) listenHost() string {
 	if s.cfg.Get().Server.Access == "lan" {
-		host = "0.0.0.0"
+		return "0.0.0.0"
+	}
+	return "127.0.0.1"
+}
+
+// Restart 立刻按当前配置重绑端口，切换“允许局域网”不必重启程序。
+func (s *Server) Restart() error {
+	pref := s.port
+	if pref == 0 {
+		pref = 41735
+	}
+	_, err := s.listenOn(s.listenHost(), pref)
+	return err
+}
+
+func (s *Server) listenOn(host string, preferred int) (int, error) {
+	s.lnMu.Lock()
+	defer s.lnMu.Unlock()
+	if s.ln != nil {
+		_ = s.ln.Close() // 只关监听器，已建立的连接不受影响
+		s.ln = nil
 	}
 	for p := preferred; p < preferred+40; p++ {
 		ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, p))
@@ -311,8 +336,9 @@ func (s *Server) Listen(preferred int) (int, error) {
 			continue
 		}
 		s.port = p
-		addr = ln.Addr().String()
-		go func() {
+		s.lnHost = host
+		s.ln = ln
+		go func(ln net.Listener) {
 			srv := &http.Server{
 				Handler:           s.authMiddleware(s.mux),
 				ReadHeaderTimeout: 10 * time.Second,
@@ -320,8 +346,8 @@ func (s *Server) Listen(preferred int) (int, error) {
 			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 				logx.Errorf("server", "HTTP 服务退出: %v", err)
 			}
-		}()
-		logx.Infof("server", "本地服务已启动 http://%s", addr)
+		}(ln)
+		logx.Infof("server", "本地服务已启动 http://%s", ln.Addr().String())
 		return p, nil
 	}
 	return 0, fmt.Errorf("找不到可用端口")

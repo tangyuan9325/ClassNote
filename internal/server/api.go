@@ -120,6 +120,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cur := s.cfg.Get()
+	oldAccess := cur.Server.Access
 	// 密钥为掩码或空时保留原值（掩码形如 sk-12••••••ab）。
 	if maskedOrEmpty(incoming.Provider.APIKey) {
 		incoming.Provider.APIKey = cur.Provider.APIKey
@@ -163,6 +164,15 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		resp["clientError"] = cerr.Error()
 	} else if client != nil {
 		resp["client"] = client.Describe()
+	}
+	// 切换“允许局域网”立刻重绑端口，不再要求手动重启。
+	if cfg.Server.Access != oldAccess {
+		if err := s.Restart(); err != nil {
+			resp["restartError"] = err.Error()
+		} else {
+			resp["restarted"] = true
+			resp["urls"] = lanURLs(s.port, cfg.Server.Token)
+		}
 	}
 	writeJSON(w, resp)
 }
@@ -910,8 +920,8 @@ func (s *Server) handlePluginMarket(w http.ResponseWriter, r *http.Request) {
 // handlePluginInstall 从市场安装技能包。
 func (s *Server) handlePluginInstall(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		ID   string             `json:"id"`
-		Item plugin.MarketItem  `json:"item"`
+		ID   string            `json:"id"`
+		Item plugin.MarketItem `json:"item"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeErr(w, 400, err)
@@ -1114,10 +1124,12 @@ func (s *Server) handleMicTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rec := audio.New(16000)
+	logx.Infof("asr", "麦克风检测：打开录音设备…")
 	if err := rec.Start(-1); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	logx.Infof("asr", "麦克风检测：设备已打开，采集 2.5 秒")
 	var peak float64
 	deadline := time.After(2500 * time.Millisecond)
 loop:

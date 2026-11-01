@@ -12,6 +12,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"classnote/internal/logx"
 )
 
 var (
@@ -26,10 +28,13 @@ var (
 	procWaveInStart           = winmm.NewProc("waveInStart")
 	procWaveInStop            = winmm.NewProc("waveInStop")
 	procWaveInReset           = winmm.NewProc("waveInReset")
+	procWaveInErrorText       = winmm.NewProc("waveInGetErrorTextW")
 )
 
 const (
-	waveMapper    = ^uint32(0)
+	// WAVE_MAPPER 是 (UINT_PTR)-1；注意不是 ^uint32(0)，
+	// 在 64 位上那是设备号 4294967295，waveInOpen 会失败。
+	waveMapper    = ^uintptr(0)
 	whdrDone      = 0x00000001
 	whdrPrepared  = 0x00000002
 	callbackNull  = 0x00000000
@@ -130,7 +135,7 @@ func (r *Recorder) Start(device int) error {
 	}
 	devID := uintptr(device)
 	if device < 0 {
-		devID = uintptr(waveMapper)
+		devID = waveMapper
 	}
 	var h uintptr
 	open := func(id uintptr) uintptr {
@@ -143,17 +148,29 @@ func (r *Recorder) Start(device int) error {
 		return ret
 	}
 	ret := open(devID)
+	logx.Debugf("audio", "waveInOpen dev=%d ret=%d", devID, ret)
+	// 偶发 MMSYSERR_ERROR：通常是上一个采集器刚释放、设备还没就绪，稍等重试。
+	for attempt := 0; ret != 0 && attempt < 3; attempt++ {
+		time.Sleep(250 * time.Millisecond)
+		ret = open(devID)
+		logx.Debugf("audio", "waveInOpen retry dev=%d ret=%d", devID, ret)
+	}
 	// 默认设备（WAVE_MAPPER）打不开时，逐个尝试枚举到的录音设备。
 	// 常见于只插了 USB 麦克风、系统默认设备被禁用，或默认设备被独占的情况。
 	if ret != 0 && device < 0 {
 		for i := 0; i < Devices(); i++ {
-			if ret = open(uintptr(i)); ret == 0 {
+			r2 := open(uintptr(i))
+			logx.Debugf("audio", "waveInOpen fallback dev=%d ret=%d", i, r2)
+			if r2 == 0 {
+				ret = 0
 				break
 			}
+			ret = r2
 		}
 	}
 	if ret != 0 {
-		return fmt.Errorf("打开录音设备失败 (code=%d)，请检查麦克风权限", ret)
+		return fmt.Errorf("打开录音设备失败 (code=%d)，共 %d 个设备：%s",
+			int32(ret), Devices(), waveErrText(ret))
 	}
 	r.handle = h
 	// 4 个 200ms 缓冲，轮转复用。
@@ -266,6 +283,13 @@ func (r *Recorder) closeLocked() {
 	r.handle = 0
 	r.headers = nil
 	r.bufs = nil
+}
+
+// waveErrText 把 waveIn 错误码翻译成系统提示。
+func waveErrText(ret uintptr) string {
+	var buf [256]uint16
+	procWaveInErrorText.Call(ret, uintptr(unsafe.Pointer(&buf[0])), 256)
+	return windows.UTF16ToString(buf[:])
 }
 
 func pcmPeak(b []byte) float64 {

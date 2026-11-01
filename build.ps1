@@ -12,7 +12,7 @@ Write-Host "[1/5] tidy modules" -ForegroundColor Cyan
 go mod tidy
 
 Write-Host "[2/5] build GUI binary" -ForegroundColor Cyan
-$ldflags = "-H windowsgui -s -w -X main.version=$Version -X main.buildTime=$(Get-Date -Format 'yyyy-MM-dd')"
+$ldflags = "-H windowsgui -s -X main.version=$Version -X main.buildTime=$(Get-Date -Format 'yyyy-MM-dd')"
 go build -trimpath -ldflags $ldflags -o "ClassNote.exe" .
 if ($LASTEXITCODE -ne 0) { throw "build failed" }
 

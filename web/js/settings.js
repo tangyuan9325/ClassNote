@@ -329,7 +329,7 @@ function accessTab(cfg) {
   const sc = cfg.server || {};
   const urls = (srv.urls || []).map((u) => `
     <div class="row" style="gap:6px;align-items:center">
-      <code style="flex:1;font-size:11px;background:var(--bg-2);padding:6px 8px;border-radius:6px;overflow:auto;white-space:nowrap">${esc(u)}</code>
+      <code style="flex:1;font-size:11px;background:var(--bg-sunken);padding:6px 8px;border-radius:6px;overflow:auto;white-space:nowrap">${esc(u)}</code>
       <button class="btn small" data-copy="${esc(u)}">复制</button>
     </div>`).join('');
   return `
@@ -340,7 +340,7 @@ function accessTab(cfg) {
         <button data-v="local" class="${sc.access !== 'lan' ? 'active' : ''}">仅本机</button>
         <button data-v="lan" class="${sc.access === 'lan' ? 'active' : ''}">允许局域网</button>
       </div>
-      <div class="desc">开启局域网后，同一 WiFi 下的手机/平板可以用下方链接访问。所有外部访问都需要密钥。</div>
+      <div class="desc">开启局域网后，同一 WiFi 下的手机/平板可以用下方链接访问。所有外部访问都需要密钥。若手机仍打不开，请在 Windows 防火墙允许 ClassNote 通过公用/专用网络。</div>
     </div>
     <div class="field">
       <label>访问密钥</label>
@@ -366,7 +366,7 @@ function bindAccess() {
     S.cfg.server = S.cfg.server || {};
     S.cfg.server.access = b.dataset.v;
     saveConfig();
-    toast(b.dataset.v === 'lan' ? '已允许局域网访问，重启后生效' : '已限制为仅本机', 'ok');
+    toast(b.dataset.v === 'lan' ? '已允许局域网访问，立即生效' : '已限制为仅本机', 'ok');
   }));
   $('#btn-copy-token')?.addEventListener('click', () => {
     copy($('#f-token')?.value || '');
