@@ -21,8 +21,21 @@
 | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | 界面布局与视觉规范（栅格比例、圆角阶梯、发丝线、浮起面板层级）、插件清单与市场索引契约、Agent 的 turn/step 与工具审批流程 | MIT |
 | [dsh-plugin-catalog](https://www.npmjs.com/package/dsh-plugin-catalog)（npm） | 插件索引快照，随包分发的 `internal/plugin/dsh-plugins.json.gz` 由此生成 | MIT |
 
-这两个项目只被**参考设计与公开契约**，没有代码被复制进本仓库，也没有引入其运行时。
-ClassNote 不加载任何 npm 包；「DSH」渠道里的插件在本项目内只是引用与安装命令。
+这两个项目只被**参考设计与公开契约**，没有代码被复制进本仓库。
+
+## 按需安装的运行时（不分发）
+
+| 组件 | 说明 | 许可 |
+| --- | --- | --- |
+| [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh) | 用户在设置里点「安装 DSH 运行时」时，由本机 npm 从公共 registry 安装到 `data/dsh/runtime`。本项目不分发其代码 | MIT（许可原文随安装落到该目录） |
+| [Node.js](https://nodejs.org) | 本机没有满足版本要求的 Node 时，下载官方便携 zip 解压到 `data/dsh/node` | MIT |
+
+MIT 允许再分发，但要求在副本中保留版权声明与许可声明。因此运行时安装完成后，
+ClassNote 会在 `data/dsh/runtime/` 写下 `LICENSE-DeepSeek-Harness.txt`（原文）与
+`README-ClassNote.txt`（来源与边界说明）；Node 便携版自带 LICENSE 文件，一并保留。
+
+插件是各自作者的独立作品，以各自许可发布。ClassNote 只负责执行
+`dsh plugin --profile web add <包名>`，不对插件内容作任何担保。
 
 ## 运行环境依赖
 

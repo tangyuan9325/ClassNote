@@ -391,3 +391,52 @@ html[data-ui="legacy"] .dsh-composer-bar { display: none; }
 /* 样式切换器在两种骨架下都在侧栏底部 */
 html[data-ui="legacy"] .style-switch { margin-bottom: 6px; }
 html[data-ui="legacy"] .style-switch button { font-size: 11.5px; }
+
+/* ---------------- DSH 运行时面板 ----------------
+   两套 UI 共用：运行时是功能，不是装饰，legacy 下也要能用。 */
+.dsh-panel {
+  margin: 10px 0 4px;
+  padding: 12px 14px;
+  border: var(--dsw-hairline);
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-alias-bg-layer-1);
+}
+.dsh-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.dsh-panel-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.dsh-panel-title b { font-size: 13.5px; }
+.dsh-panel-title .hint { font-size: 11.5px; color: var(--ink-3); }
+.dsh-panel-title .hint.err { color: var(--warn); }
+.dsh-panel-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dsh-panel .tag.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 42%, var(--line)); }
+.dsh-panel .tag.bad { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 42%, var(--line)); }
+
+.dsh-log {
+  margin-top: 10px;
+  max-height: 200px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: var(--dsw-radius-sm);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.dsh-log-line.err { color: var(--warn); }
+
+.dsh-frame-wrap {
+  margin-top: 10px;
+  border-radius: var(--dsw-radius-md);
+  overflow: hidden;
+  border: var(--dsw-hairline);
+  background: var(--bg);
+}
+.dsh-frame-wrap iframe {
+  display: block;
+  width: 100%;
+  height: min(72vh, 760px);
+  border: 0;
+  background: var(--bg);
+}

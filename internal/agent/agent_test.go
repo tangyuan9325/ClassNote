@@ -70,8 +70,8 @@ func (h *fakeHost) EditNote(sessionID, segID, notes, summary string) error {
 }
 
 func (h *fakeHost) GenerateReport(id string) (string, error) { return "/tmp/report.pdf", nil }
-func (h *fakeHost) Timetable() TimetableInfo                { return TimetableInfo{Source: "manual"} }
-func (h *fakeHost) Plugins() []PluginInfo                   { return h.plugins }
+func (h *fakeHost) Timetable() TimetableInfo                 { return TimetableInfo{Source: "manual"} }
+func (h *fakeHost) Plugins() []PluginInfo                    { return h.plugins }
 
 func testSession() *store.Session {
 	return &store.Session{
@@ -301,9 +301,9 @@ func TestToolsReadAndWrite(t *testing.T) {
 func TestNeedApprovalLevels(t *testing.T) {
 	h := &fakeHost{sess: testSession()}
 	for _, c := range []struct {
-		perm     string
-		tool     string
-		ask      bool
+		perm string
+		tool string
+		ask  bool
 	}{
 		{"all", "notes.append", false},
 		{"remind", "notes.append", true},

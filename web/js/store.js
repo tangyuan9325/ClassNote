@@ -1,4 +1,5 @@
 import { api } from './api.js';
+import { installDshPlugin } from './dsh.js';
 import { $, $$, el, toast, esc } from './util.js';
 import { applyTheme, themeLabel } from './theme.js';
 import { openSettings } from './settings.js';
@@ -89,6 +90,8 @@ export async function renderPlugins(force = false) {
   renderBroken(broken);
 
   const installed = new Set(local.map((s) => s.id));
+  // DSH 渠道的「已安装」要看运行时里真实的 npm 依赖，而不是本地插件表。
+  const dshSet = new Set(plChannel === 'dsh' ? await dshInstalledNames() : []);
   if (plTab === 'installed') {
     box.innerHTML = '';
     if (!local.length) {
@@ -105,9 +108,24 @@ export async function renderPlugins(force = false) {
     box.innerHTML = `<div class="store-empty">${plFilter ? '没有匹配的插件' : '这个渠道暂时没有插件'}</div>`;
     return;
   }
-  for (const it of list) box.append(marketRow(it, installed.has(it.id)));
+  for (const it of list) {
+    const has = it.kind === 'external'
+      ? dshSet.has(it.package || it.name)
+      : installed.has(it.id);
+    box.append(marketRow(it, has));
+  }
   if (data.total > list.length) {
     box.append(el('div', { class: 'store-empty', text: `共 ${data.total} 个条目，已显示前 ${list.length} 个，用搜索或分类缩小范围` }));
+  }
+}
+
+// dshInstalledNames 读运行时里已装的插件包名；运行时没装就返回空。
+async function dshInstalledNames() {
+  try {
+    const st = await api.get('/api/dsh/status');
+    return st.plugins || [];
+  } catch (e) {
+    return [];
   }
 }
 
@@ -199,7 +217,25 @@ function marketRow(s, has) {
     <div class="store-actions"></div>`;
   const actions = row.querySelector('.store-actions');
   if (ext) {
-    const copy = el('button', { class: 'btn small ghost', text: '复制安装命令' });
+    // DSH 插件是真 npm 包：装了运行时就直接装进去，没装则引导去装。
+    const inst = el('button', { class: 'btn small ' + (has ? 'ghost' : 'primary'), text: has ? '已安装' : '安装到 DSH' });
+    if (has) inst.disabled = true;
+    else {
+      inst.addEventListener('click', async () => {
+        inst.disabled = true;
+        inst.textContent = '安装中…';
+        try {
+          await installDshPlugin(s.package || s.name);
+          toast('已装进 DSH：' + s.name, 'ok');
+          renderPlugins();
+        } catch (e) {
+          toast(e.message, 'err');
+          inst.disabled = false;
+          inst.textContent = '安装到 DSH';
+        }
+      });
+    }
+    const copy = el('button', { class: 'btn small ghost', text: '复制命令' });
     copy.addEventListener('click', async () => {
       const cmd = `dsh plugin --profile web add ${s.package || s.name}`;
       try {
@@ -207,10 +243,11 @@ function marketRow(s, has) {
         toast('已复制：' + cmd, 'ok');
       } catch (e) { window.prompt('复制这条命令到 DSH 里安装：', cmd); }
     });
-    const reg = el('button', { class: 'btn small ' + (has ? 'ghost' : 'primary'), text: has ? '已登记' : '登记到本机' });
-    if (has) reg.disabled = true;
-    else reg.addEventListener('click', () => install(s, reg));
-    actions.append(copy, reg);
+    const go = el('button', { class: 'btn small ghost', text: '仓库' });
+    go.addEventListener('click', () => {
+      if (s.url) window.open(s.url, '_blank', 'noopener');
+    });
+    actions.append(inst, copy, go);
   } else {
     const b = el('button', { class: 'btn small ' + (has ? 'ghost' : 'primary'), text: has ? '已安装' : '安装' });
     if (has) b.disabled = true;

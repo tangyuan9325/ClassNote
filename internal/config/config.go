@@ -282,12 +282,12 @@ func Default() Config {
 			ICC:         ICCConfig{Enabled: true, AutoInject: true},
 		},
 		UI: UIConfig{
-			Theme:        "claude",
+			Theme:         "claude",
 			ShowFloatBall: true, // 默认显示；用户在外观里关掉后，normalize 不再强制打开
-			Accent:    "#C96442",
-			Density:   "comfortable",
-			FontScale: 100,
-			Style:     "legacy",
+			Accent:        "#C96442",
+			Density:       "comfortable",
+			FontScale:     100,
+			Style:         "legacy",
 		},
 	}
 }

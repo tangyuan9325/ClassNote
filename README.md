@@ -4,7 +4,7 @@
 
 ClassNote 面向真实的教学环境设计：它不要求教师改变上课习惯，也不需要把课堂内容上传到某个云端平台。程序以 Go 编写，单文件运行，界面是本地网页，数据全部保存在程序所在目录。
 
-**当前版本 v1.2.7** —— 插件升级为声明式 v2 模型、插件市场接入双渠道（ClassNote / DeepSeek Harness）、课堂 Agent 换成真的会调用工具的多步运行时、新增经典 / DSH 两套界面样式切换。详见[更新日志](#更新日志)。
+**当前版本 v1.2.8** —— 新增**内置 DSH 运行时**：DeepSeek Harness 的插件现在能在 ClassNote 里真的装上、真的跑起来，界面直接嵌在插件页；外加插件 v2 模型、双渠道市场、多步工具 Agent、经典 / DSH 双样式。详见[更新日志](#更新日志)。
 
 ![主界面](docs/images/main.png)
 
@@ -17,6 +17,7 @@ ClassNote 面向真实的教学环境设计：它不要求教师改变上课习�
 - [工作原理](#工作原理)
 - [课堂 Agent](#课堂-agent)
 - [插件（v2）与插件市场](#插件v2与插件市场)
+- [内置 DSH 运行时](#内置-dsh-运行时)
 - [界面样式：经典 / DSH](#界面样式经典--dsh)
 - [配置说明](#配置说明)
 - [与 ClassIsland / InkCanvasForClass 联动](#与-classisland--inkcanvasforclass-联动)
@@ -49,7 +50,8 @@ ClassNote 面向真实的教学环境设计：它不要求教师改变上课习�
 | **局域网访问** | 手机/平板用带密钥的链接访问；密钥随机生成、可改可持久化，非回环请求强制校验 |
 | **机器人通知** | 企业微信 / 钉钉 / 飞书 / Telegram / Server酱 / Discord / Slack / Bark / PushPlus / ntfy / Gotify / 自定义 Webhook，快速添加可搜索 |
 | **主题商店** | 4 套内置 + 自定义取色编辑（实时预览）+ 导出导入 + 社区主题一键安装 |
-| **插件市场（双渠道）** | 「ClassNote」渠道装本地插件，装完即用；「DSH」渠道可浏览 DeepSeek Harness 的 4100+ 插件，一键复制安装命令或登记到本机 |
+| **内置 DSH 运行时** | 插件页顶部一键装 Node + DeepSeek Harness（约 600 MB，只需一次），装完即可在 ClassNote 里安装、启停、运行 DSH 插件，DSH 的界面直接嵌在同一页 |
+| **插件市场（双渠道）** | 「ClassNote」渠道装本地插件，装完即用；「DSH」渠道收录 DeepSeek Harness 的 4104 个插件，装了运行时就能一键真装，没装则给引导与命令 |
 | **插件（v2 声明式）** | 插件不再只是一段提示词：可声明身份、类型（提示词 / 工具 / 界面 / 外部引用）、能力面、最小权限、界面槽位与事件订阅，由宿主解释执行，**不加载任何第三方可执行代码** |
 | **课堂 Agent** | 真的会调用工具的多步 Agent：读课、翻页检索、写笔记、生成报告、查课表。模型列表自带**网页版 Qwen / DeepSeek**（免 API Key），也可走任意 OpenAI 兼容接口 |
 | **界面样式切换** | 设置 → 外观里一键切换「经典」（1.2.6 及以前的布局）与「DSH」（借鉴 DeepSeek Harness 的会话栏 + 浮起输入区布局），随时可切回 |
@@ -212,11 +214,73 @@ Agent 拿不到文件系统，也拿不到命令行 —— 这不是「暂时没
 | 渠道 | 内容 | 安装后 |
 | --- | --- | --- |
 | **ClassNote** | 本项目的插件清单（内置 + 仓库 `skills.json`） | 立刻可用，装完即生效 |
-| **DSH** | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的插件索引：**4104 个插件、23 个分类** | 显示「复制安装命令」（`dsh plugin --profile web add <包名>`）与「登记到本机」；实际运行需要装 DSH |
+| **DSH** | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的插件索引：**4104 个插件、23 个分类** | 装了运行时：按钮是「安装到 DSH」，**真的执行 npm 安装并重启运行时**；没装：引导去顶部装运行时，并保留「复制命令」给已经装了 DSH 的人 |
 
 - DSH 渠道的索引是**内置快照**（`internal/plugin/dsh-plugins.json.gz`，578 KB），来自 npm 包 `dsh-plugin-catalog`（format 1），随程序分发，断网也能浏览；后台每 24 小时才试着更新一次。
 - ClassNote 渠道走「缓存 + 后台刷新」（10 分钟 TTL），接口**从不等待网络**。之前每敲一个字就同步打一次 GitHub，断网时每次卡十几秒，属于会直接影响上课的 bug，已修。
 - 索引地址只接受 https，且会拒绝回环 / 私网 / 链路本地地址，避免有人用一条 query 让本机去请求内网。
+
+---
+
+## 内置 DSH 运行时
+
+### 为什么要有这一层
+
+DSH 的插件是 **npm 包**，只有 DSH 自己能加载。1.2.7 里「DSH 渠道」只能帮你复制一条安装命令——那不叫能用，那叫给了个说明书。1.2.8 把这一步补上了：ClassNote 在本机准备一个 DSH 运行时，装插件、起进程、把界面嵌进插件页，全在同一个窗口里完成。
+
+### 它怎么工作
+
+```text
+插件页顶部
+  └─ 安装 DSH 运行时
+       ├─ 没有 Node？自动下官方 Node 便携版（约 35 MB，解压即用，不写系统 PATH）
+       ├─ corepack 生成 pnpm（装插件要用，不污染系统环境）
+       ├─ npm install @deepseek-ai/dsh（约 600 MB，608 个包，实测 1 分 53 秒）
+       └─ 写一份 MIT 许可到 data/dsh/runtime/，然后启动
+            └─ dsh web --no-open --port <自动选端口>
+                 └─ 从 stdout 抓登录令牌 → 拿到带 token 的地址
+                      ├─ 「在页面内打开」：iframe 直接嵌进来
+                      └─ 「新窗口打开」：交给系统浏览器
+```
+
+「发现」页里 DSH 的每个插件，按钮就是 **安装到 DSH**：真的跑 `dsh plugin --profile web add <包名>`，装完同步重启运行时让插件生效。
+
+### 三条硬约束（都是实测出来的）
+
+| 约束 | 说明 |
+| --- | --- |
+| **Node ≥ 22.19** | DSH 的入口用了 `import.meta.main`。低版本 Node 读不懂这个属性，CLI 会**静默退出、exit code 0、零输出**——看着像「插件坏了」，其实是运行时太旧。ClassNote 会先探测版本，不够就直接告诉你，并且能自动下 Node 24 |
+| **运行时约 600 MB** | 608 个包，压不下去（可选依赖只省 60 MB，删 sourcemap 也只省 87 MB）。所以只能按需安装，不能塞进安装包 |
+| **装插件要 pnpm** | `dsh plugin` 内部转发 pnpm。ClassNote 用 Node 自带的 corepack 生成 pnpm，装在 `data/dsh/node` 下，不动系统环境 |
+
+### 版本不兼容怎么办
+
+DSH 有版本守卫。插件要求的 DSH 版本与当前运行时对不上时，会**拒绝安装**并给出诊断。ClassNote 不会把这段英文原文甩给你，而是：
+
+1. 识别出来，说明「这个插件要求 X，当前是 Y」；
+2. 弹一句确认：「仍然安装可能崩溃或丢数据」；
+3. 你确认后，它才用 `dsh plugin allow-version ... --accept-risk` 开豁免并重试。
+
+### 数据与边界
+
+```text
+data/dsh/
+  node/                 # 便携版 Node（含 npm、corepack 生成的 pnpm）
+  runtime/              # DSH 运行时（含 LICENSE-DeepSeek-Harness.txt）
+  home/profiles/web/    # DSH 的 web profile：package.json 里就是已装插件
+  downloads/            # 下载缓存，装完即删
+```
+
+- **插件跑在 DSH 的进程和页面里，不跑在 ClassNote 里。** iframe 是跨源的（127.0.0.1 不同端口），插件碰不到 ClassNote 的 DOM、数据与课堂文件。这是刻意划的边界，不是没做。
+- **ClassNote 不分发 DSH 的代码。** 运行时是从 npm 现场装的，装完在本地留一份 MIT 许可原文（`data/dsh/runtime/LICENSE-DeepSeek-Harness.txt`）与来源说明，满足 MIT 的署名义务。
+- **退出 ClassNote 会关掉 DSH。** 不留孤儿进程占端口（这条是实测出来的：早先的实现在停止时会卡住，因为子进程没独立进程组）。
+
+### 不想要这 600 MB？
+
+可以完全不装。不装的时候：
+- ClassNote 渠道的插件照常可用（它们由 ClassNote 自己解释执行，不需要 Node）；
+- DSH 渠道只做索引浏览，给命令与仓库链接，不影响任何其它功能；
+- 整个应用体积仍是 20 MB 出头。
 
 ---
 
@@ -334,6 +398,7 @@ data/
   logs/app-YYYYMMDD.log     # 运行日志
   plugins/skills/<id>.json  # 插件（v2 声明式清单，自动从 v1 迁移）
   cache/dsh-plugins.json    # DSH 插件索引的离线缓存（24h TTL）
+  dsh/                      # 可选：DSH 运行时（Node + DeepSeek Harness + profile）
   webprofile/               # 网页版 AI 的浏览器登录态
   pdfprofile/               # 打印 PDF 用的独立浏览器配置
   runtime.json              # 端口与进程信息，供外部脚本对接
@@ -385,7 +450,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1
    - 中文识别对同音字（如「荷塘月色」→「和堂乐色」）仍有误差，属本地小模型的正常水平；要更高精度可换 medium 模型或用云端接口。
 6. **DeepSeek 网页版在某些网络下被限流。** 本机 curl 请求 chat.deepseek.com 会返回 429，但真实浏览器可以正常打开登录页；接入流程与千问一致（设置 → 模型 → 网页版 → 登录）。API 模式的 DeepSeek 预设不受影响。
 7. **只在 Windows 上测试。** 程序本身使用了 Win32 API，macOS / Linux 无法编译运行（`internal/plugin`、`internal/agent`、`internal/llm`、`internal/update` 这些纯逻辑包可以在 Linux 上跑单测）。
-8. **DSH 渠道的插件需要 DSH 才能跑。** ClassNote 只负责浏览索引、登记与复制安装命令；那些插件是 npm 包、依赖 DSH 运行时，本项目不会加载它们（这也是刻意的：老师电脑上不该随便跑第三方包）。
+8. **DSH 插件跑在 DSH 里，不跑在 ClassNote 里。** ClassNote 负责装运行时、装插件、起进程、把界面嵌进来；插件代码本身在 DSH 的进程与页面里执行，跨源隔离，碰不到 ClassNote 的数据，也碰不到你的课堂文件。这是刻意划的边界。
 9. **DSH 索引是快照。** 内置的那份是打版时的状态，之后新上架的插件要等后台刷新（24 小时一次）才会出现；断网时一直用快照。
 
 ---
@@ -411,7 +476,30 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 ## 更新日志
 
-### v1.2.7（当前）
+### v1.2.8（当前）
+
+**新增：内置 DSH 运行时**
+
+- 插件页顶部一键装 **Node + DeepSeek Harness**，装完即可在 ClassNote 里安装、启停、运行 DSH 的插件。
+- DSH 渠道的按钮从「复制命令」变成 **安装到 DSH**：真的执行 `dsh plugin --profile web add`，装完同步重启运行时生效。
+- DSH 的 Web UI 可以直接 **iframe 嵌在插件页里**（实测其响应没有 `X-Frame-Options`，可嵌），也能丢给系统浏览器。
+- 没有 Node 时自动下载官方便携版（约 35 MB，解压到 `data/dsh/node`，不写系统 PATH）；装插件用的 pnpm 由 corepack 生成，同样不污染系统。
+- 识别 DSH 的**版本兼容守卫**：不兼容的插件先说明「要求 X / 当前 Y」，用户确认后才用 `allow-version --accept-risk` 强行装。
+- 装完在本地留一份 **MIT 许可原文**与来源说明，满足署名义务。
+
+**修掉的坑**（都是这轮联调实测出来的，不是推演）
+
+| 问题 | 后果 |
+| --- | --- |
+| Node 22.13 跑 DSH 会静默退出（`import.meta.main`） | 表面「装好了但没反应」，实际是版本太低。现在先探测版本并说人话 |
+| 停止 DSH 会永久卡住 | 子进程没独立进程组，`kill(-pgid)` 打到自己；`Wait()` 没有超时。现在 `Setpgid` + 5 秒超时 + 强杀 |
+| 装完插件用后台 goroutine 重启 | 和外部 `Stop()` 抢进程，留下占端口的孤儿。改成同步重启 |
+| 日志缓冲无锁 | 多个协程同时写 `logs`，`Status()` 并发读是数据竞争 |
+| `Shutdown()` 里调 `dshOnce.Do(空函数)` | once 被标记完成，之后再也创建不出运行时 |
+
+**自检**：`internal/dsh` 9 个用例（版本比较、令牌解析、插件列表解析、zip slip、许可落盘、包名注入）；真机跑通「从零安装 1 分 53 秒 → 启动 1.4 秒 → 装 3 个插件 → 停止无残留」全链路。
+
+### v1.2.7
 
 **新增**
 
@@ -458,6 +546,8 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 | [golang.org/x/sys](https://pkg.go.dev/golang.org/x/sys) | Win32 API 绑定 | BSD-3-Clause |
 | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | **仅借鉴设计**：界面布局与视觉规范、插件模型与市场索引格式、Agent 的 turn/step 与工具审批流程。未包含其源代码 | MIT |
 | [dsh-plugin-catalog](https://www.npmjs.com/package/dsh-plugin-catalog) | DSH 插件索引快照（`internal/plugin/dsh-plugins.json.gz`，4104 条） | MIT |
+| [DeepSeek Harness 运行时](https://www.npmjs.com/package/@deepseek-ai/dsh) | 按需安装到用户本机（`data/dsh/runtime`），**不随本项目分发**；装完在本地保留 MIT 许可原文 | MIT |
+| [Node.js](https://nodejs.org) | 按需下载的便携运行时（`data/dsh/node`），仅在启用 DSH 时使用 | MIT |
 
 关于 DSH 的借鉴范围，说明白一点，免得误会：
 

@@ -35,7 +35,7 @@ import (
 var webAssets embed.FS
 
 var (
-	version   = "1.2.7"
+	version   = "1.2.8"
 	buildTime = "dev"
 )
 
@@ -251,6 +251,7 @@ func main() {
 				}
 			}
 			cancel()
+			srv.Shutdown()
 			os.Exit(0)
 		})
 	}

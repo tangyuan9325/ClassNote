@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"classnote/internal/config"
@@ -296,5 +297,47 @@ func TestSmokeUIConfig(t *testing.T) {
 	}
 	if got := s.cfg.Get().UI.Style; got != "legacy" {
 		t.Fatalf("非法样式应回落 legacy，实际 %s", got)
+	}
+}
+
+// TestSmokeDSHRuntime 覆盖 DSH 运行时接口的边界。
+//
+// 这台机器上不一定装了运行时（600 MB），所以只断言「接口能回、字段齐全、
+// 非法输入被挡」——真正的安装/启停由 internal/dsh 的单测和联调工具覆盖。
+func TestSmokeDSHRuntime(t *testing.T) {
+	s := newSmokeServer(t)
+
+	code, m, _ := call(t, s, "GET", "/api/dsh/status", nil)
+	if code != 200 {
+		t.Fatalf("运行时状态接口异常：%d", code)
+	}
+	for _, k := range []string{"phase", "installed", "running", "minNode", "supported"} {
+		if _, ok := m[k]; !ok {
+			t.Fatalf("状态里缺字段 %s：%v", k, m)
+		}
+	}
+	if m["minNode"] != "22.19.0" {
+		t.Fatalf("Node 下限不对：%v", m["minNode"])
+	}
+
+	// 空包名 / 超长包名必须 400。
+	if code, _, _ := call(t, s, "POST", "/api/dsh/plugin", map[string]any{}); code != 400 {
+		t.Fatalf("空包名应 400，实际 %d", code)
+	}
+	long := strings.Repeat("a", 300)
+	if code, _, _ := call(t, s, "POST", "/api/dsh/plugin", map[string]any{"package": long}); code != 400 {
+		t.Fatalf("超长包名应 400，实际 %d", code)
+	}
+	// 没装运行时的时候装插件，要给可读的错误而不是 500 堆栈。
+	code, m, _ = call(t, s, "POST", "/api/dsh/plugin", map[string]any{"package": "left-pad"})
+	if code != 500 {
+		t.Fatalf("没装运行时装插件应报错，实际 %d", code)
+	}
+	if msg, _ := m["error"].(string); !strings.Contains(msg, "运行时") {
+		t.Fatalf("错误信息不够直白：%v", m["error"])
+	}
+	// 停止一个没启动的运行时应当是幂等的。
+	if code, _, _ := call(t, s, "POST", "/api/dsh/stop", map[string]any{}); code != 200 {
+		t.Fatalf("停止应幂等，实际 %d", code)
 	}
 }

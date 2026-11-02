@@ -17,7 +17,13 @@ async function request(path, options = {}) {
   const data = type.includes('json') ? await res.json().catch(() => ({})) : await res.text();
   if (!res.ok) {
     const msg = (data && data.error) || (typeof data === 'string' ? data : `请求失败 ${res.status}`);
-    throw new Error(msg);
+    // 带上状态码与业务码：调用方要能分辨「输入错了」和「版本不兼容」。
+    const err = new Error(msg);
+    err.status = res.status;
+    err.code = (data && data.code) || '';
+    err.data = data;
+    err.incompatible = err.code === 'incompatible';
+    throw err;
   }
   return data;
 }
@@ -37,7 +43,7 @@ export function connectEvents(handlers) {
   }
   const types = ['session', 'session_ended', 'slide', 'transcript', 'analysis', 'segment_status',
     'report', 'error', 'class_state', 'auto_start', 'auto_stop', 'icc', 'classisland', 'test',
-    'ui_command'];
+    'ui_command', 'dsh_log'];
   for (const t of types) {
     es.addEventListener(t, (ev) => {
       let payload = {};

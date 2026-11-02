@@ -21,6 +21,7 @@ import (
 	"classnote/internal/agent"
 	"classnote/internal/appinfo"
 	"classnote/internal/config"
+	"classnote/internal/dsh"
 	"classnote/internal/integration"
 	"classnote/internal/lesson"
 	"classnote/internal/llm"
@@ -54,6 +55,10 @@ type Server struct {
 	ln        net.Listener // 当前监听器；切换局域网开关时需要重绑
 	lnHost    string
 	lnMu      sync.Mutex
+
+	// DSH 运行时（按需安装，6 亿字节级别，懒加载）
+	dshOnce sync.Once
+	dsh     *dsh.Runtime
 
 	// Agent 工具表与审批通道
 	toolMu    sync.Mutex
@@ -184,6 +189,11 @@ func (s *Server) routes() {
 	m.HandleFunc("/api/plugins/install", s.handlePluginInstall)
 	m.HandleFunc("/api/plugins/uninstall", s.handlePluginUninstall)
 	m.HandleFunc("/api/plugins/slots", s.handlePluginSlots)
+	m.HandleFunc("/api/dsh/status", s.handleDSHStatus)
+	m.HandleFunc("/api/dsh/install", s.handleDSHInstall)
+	m.HandleFunc("/api/dsh/start", s.handleDSHStart)
+	m.HandleFunc("/api/dsh/stop", s.handleDSHStop)
+	m.HandleFunc("/api/dsh/plugin", s.handleDSHPlugin)
 	m.HandleFunc("/api/agent/info", s.handleAgentInfo)
 	m.HandleFunc("/api/agent/run", s.handleAgentRun)
 	m.HandleFunc("/api/agent/chat", s.handleAgentRun) // v1.2.6 的旧地址，行为保持不变（无工具时等价纯问答）
