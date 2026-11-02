@@ -4,6 +4,8 @@ import { $, $$, el, toast, esc, md, fmtTime, fmtDate, fmtDur } from './util.js';
 import { startOnboarding } from './onboarding.js';
 import { openSettings } from './settings.js';
 import { initStores, renderPlugins, renderThemes } from './store.js';
+import { applyUiStyle, mountShell, loadRailSessions, markActiveSession, renderSlots, renderComposerBar } from './shell.js';
+import { initAgent, loadAgentInfo, refreshAgentContext, renderAgentPage as renderAgentPageImpl, askAgent as askAgentImpl, agentEvent } from './agent.js';
 
 export const S = {
   boot: null,
@@ -36,6 +38,7 @@ async function init() {
   S.cfg = S.boot.config.config;
   S.themeIndex = Math.max(0, (S.boot.themes || []).findIndex((t) => t.id === S.cfg.ui.theme));
   applyTheme(S.cfg.ui.theme);
+  applyUiStyle(S.cfg.ui?.style);
 
   bindGlobal();
 
@@ -58,7 +61,12 @@ function enterApp() {
   $('#onboarding').hidden = true;
   $('#app').hidden = false;
   initStores(S);
+  applyUiStyle(S.cfg?.ui?.style);
   applyRailState(!!S.cfg?.ui?.sidebarCollapsed);
+  mountShell(S, { onStyleChange: (style) => { S.cfg.ui.style = style; refreshShell(); } });
+  initAgent(S, { refreshSession: () => refreshLiveSession() });
+  loadAgentInfo();
+  loadSlots();
   connectEvents(handlers);
   refreshStatus();
   loadSessions();
@@ -216,7 +224,7 @@ function renderStatus(d) {
   }
   const emptyEl = $('#empty-state');
   if (emptyEl) emptyEl.style.display = running || (S.session && S.session.segments?.length) ? 'none' : '';
-  if (S.page === 'agent') agentContext();
+  if (S.page === 'agent') refreshAgentContext();
 }
 
 async function refreshLiveSession() {
@@ -560,6 +568,7 @@ async function loadSessions() {
       }
     }
     renderHistory(items);
+    loadRailSessions();
   } catch (e) { /* ignore */ }
 }
 
@@ -616,6 +625,7 @@ async function openSession(id) {
     if (!d.session) return;
     S.session = d.session;
     S.live = !!d.live;
+    markActiveSession(id);
     setView('live');
     renderTimeline(d.session);
     renderInspector(d.session);
@@ -687,95 +697,35 @@ function renderToday(ci) {
 
 /* ---------------- Agent 页 ---------------- */
 
-function agentContext() {
-  const ci = S.status?.classIsland;
-  const st = S.status?.status;
-  const bits = [];
-  if (S.session) {
-    const live = S.live || st?.running;
-    bits.push(`<span class="tag">${live ? '本课记录' : '课堂回顾'} · ${esc(S.session.subject || '课堂')}</span>`);
-    if (S.session.segments?.length) bits.push(`<span>${S.session.segments.length} 个片段</span>`);
-  } else {
-    bits.push('<span class="tag">通用模式</span>');
-  }
-  if (ci?.inClass && ci.subject) bits.push(`<span>ClassIsland · 正在上 ${esc(ci.subject)}</span>`);
-  const model = S.cfg?.agent?.model || S.cfg?.provider?.model || '跟随模型设置';
-  bits.push(`<span>模型 <b>${esc(model)}</b></span>`);
-  const perm = { all: '全部访问', remind: '敏感操作提醒', review: '全部人工审查' }[S.cfg?.agent?.permission || 'remind'];
-  bits.push(`<span>权限 <b>${perm}</b></span>`);
-  const box = $('#agent-context');
-  if (box) box.innerHTML = bits.join('<span style="opacity:.35">·</span>');
-}
-
+// Agent 的实现搬到了 agent.js（模型选择 / 步骤轨迹 / 审批），
+// 这里只保留与页面切换、状态刷新相关的粘合代码。
 function renderAgentPage() {
-  agentContext();
-  const thread = $('#agent-thread');
-  if (!thread) return;
-  thread.innerHTML = '';
-  const msgs = S.session?.messages || S.agentMsgs;
-  if (!msgs.length) return;
-  for (const m of msgs) appendAgentMsg(m.role, m.content, false);
-  thread.scrollTop = thread.scrollHeight;
+  renderAgentPageImpl();
 }
 
-function appendAgentMsg(role, text, tmp) {
-  const thread = $('#agent-thread');
-  if (!thread) return null;
-  const b = el('div', { class: 'agent-msg ' + (role === 'user' ? 'user' : 'assistant') + (tmp ? ' pending' : '') });
-  b.innerHTML = `<span class="who">${role === 'user' ? '你' : 'Agent'}</span>` + (role === 'user' ? esc(text) : md(text));
-  thread.append(b);
-  thread.scrollTop = thread.scrollHeight;
-  return b;
+function askAgent() {
+  askAgentImpl();
 }
 
-async function askAgent() {
-  const input = $('#agent-input');
-  const q = (input?.value || '').trim();
-  if (!q || S.agentAsking) return;
-  S.agentAsking = true;
-  const btn = $('#btn-agent-send');
-  if (btn) btn.disabled = true;
-  input.value = '';
-  input.style.height = 'auto';
-  appendAgentMsg('user', q);
-  const thinking = appendAgentMsg('assistant', '正在结合课堂内容思考…', true);
+// loadSlots 把启用插件占用的界面槽位渲染出来。
+async function loadSlots() {
   try {
-    let answer = '';
-    if (S.session && S.live) {
-      const d = await api.post('/api/lesson/ask', { question: q });
-      answer = d.answer;
-      thinking?.remove();
-      await refreshLiveSession();
-      renderAgentPage();
-    } else {
-      const d = await api.post('/api/agent/chat', {
-        question: q,
-        sessionId: S.session?.id || '',
-        history: S.agentMsgs.slice(-12),
-      });
-      answer = d.answer;
-      const now = new Date().toISOString();
-      if (S.session) {
-        S.session.messages = S.session.messages || [];
-        S.session.messages.push({ role: 'user', content: q, createdAt: now });
-        S.session.messages.push({ role: 'assistant', content: answer, createdAt: now });
-      } else {
-        S.agentMsgs.push({ role: 'user', content: q, createdAt: now });
-        S.agentMsgs.push({ role: 'assistant', content: answer, createdAt: now });
-      }
-      thinking?.remove();
-      renderAgentPage();
-    }
-  } catch (e) {
-    if (thinking) thinking.innerHTML = `<span class="who">Agent</span><span style="color:var(--danger)">${esc(e.message)}</span>`;
-  } finally {
-    S.agentAsking = false;
-    if (btn) btn.disabled = false;
-    input?.focus();
-  }
+    const d = await api.get('/api/plugins/slots');
+    renderSlots(d.slots || []);
+  } catch (e) { /* 插件槽位是增强项，失败不影响主流程 */ }
 }
 
+// refreshShell 样式切换后刷新依赖布局的部件。
+function refreshShell() {
+  renderComposerBar();
+  loadRailSessions();
+  loadSlots();
+  saveConfig(true);
+}
 
+// 供 shell.js 的会话栏调用
+S.openSession = (id) => openSession(id);
+S.refreshSession = () => refreshLiveSession();
 
 function setView(v) {
   S.view = v;
@@ -859,6 +809,12 @@ const handlers = {
   report(data) {
     toast('报告已生成', 'ok');
   },
+  agent_step(data) { agentEvent('agent_step', data); },
+  agent_tool(data) { agentEvent('agent_tool', data); },
+  agent_tool_result(data) { agentEvent('agent_tool_result', data); },
+  agent_approval(data) { agentEvent('agent_approval', data); },
+  agent_final(data) { agentEvent('agent_final', data); },
+  agent_error(data) { agentEvent('agent_error', data); },
   error(data) {
     if (data?.scope === 'audio') toast('麦克风不可用：' + data.message, 'err');
     else toast(data?.message || '发生错误', 'err');
@@ -906,27 +862,7 @@ function bindGlobal() {
   }));
   $$('#view-switch button').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
 
-  // Agent 页
-  $('#btn-agent-send')?.addEventListener('click', askAgent);
-  $('#btn-agent-clear')?.addEventListener('click', () => {
-    if (S.session) { toast('本课对话保存在课堂记录里，不会在这里清空'); return; }
-    S.agentMsgs = [];
-    renderAgentPage();
-  });
-  $$('#agent-suggest button').forEach((b) => b.addEventListener('click', () => {
-    const input = $('#agent-input');
-    if (!input) return;
-    input.value = b.dataset.q || b.textContent;
-    askAgent();
-  }));
-  const agentInput = $('#agent-input');
-  agentInput?.addEventListener('input', () => {
-    agentInput.style.height = 'auto';
-    agentInput.style.height = Math.min(120, agentInput.scrollHeight) + 'px';
-  });
-  agentInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askAgent(); }
-  });
+  // Agent 页的按键绑定在 agent.js 里（避免重复绑定导致一次提问发两遍）
 
   $('#btn-utterance')?.addEventListener('click', async () => {
     const text = window.prompt('补录一段课堂转写（会归入当前这一页）：');

@@ -135,7 +135,6 @@ func (e *Engine) Update(cfg config.Config) {
 	e.asrCli.Update(cfg.ASR)
 }
 
-// SetClient 更新模型客户端。
 // SetSkillPrompt 注入启用中的技能包提示（每次会变化，直接覆盖）。
 func (e *Engine) SetSkillPrompt(p string) {
 	e.mu.Lock()
@@ -143,6 +142,14 @@ func (e *Engine) SetSkillPrompt(p string) {
 	e.mu.Unlock()
 }
 
+// SkillPrompt 返回当前生效的插件提示词（自检与页面排查用）。
+func (e *Engine) SkillPrompt() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.skillPrompt
+}
+
+// SetClient 更新模型客户端。
 func (e *Engine) SetClient(c llm.Client) {
 	e.mu.Lock()
 	e.client = c
@@ -1093,6 +1100,26 @@ func (e *Engine) Ask(question string) (string, error) {
 	e.mu.Unlock()
 	e.persist()
 	return res.Text, nil
+}
+
+// AppendChat 把一轮 Agent 问答记到当前课堂里。
+//
+// 返回 false 表示这堂课不是正在记录的那一堂（历史课堂），调用方再走 store。
+// 这么分是为了避免「先 Load 再 Save」把并发写入的片段覆盖掉。
+func (e *Engine) AppendChat(sessionID, question, answer string) bool {
+	now := time.Now()
+	e.mu.Lock()
+	if e.sess == nil || (sessionID != "" && e.sess.ID != sessionID) {
+		e.mu.Unlock()
+		return false
+	}
+	e.sess.Messages = append(e.sess.Messages,
+		store.ChatMessage{ID: fmt.Sprintf("u%d", now.UnixNano()), Role: "user", Content: question, CreatedAt: now},
+		store.ChatMessage{ID: fmt.Sprintf("a%d", now.UnixNano()+1), Role: "assistant", Content: answer, CreatedAt: now},
+	)
+	e.mu.Unlock()
+	e.persist()
+	return true
 }
 
 func (e *Engine) buildContext(limit int) string {

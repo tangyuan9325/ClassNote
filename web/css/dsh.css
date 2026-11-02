@@ -1,0 +1,393 @@
+/* ============================================================
+   ClassNote · DSH 风格界面（可选样式）
+   ------------------------------------------------------------
+   布局与视觉规范借鉴 DeepSeek Harness（github.com/deepseek-ai/deepseek-harness，
+   MIT License）：左侧工作区/会话栏 → 中间会话 → 右侧上下文栏 → 底部输入面板，
+   以及它的圆角尺度（R4/8/12/16/20/28）、0.5px 发丝线、层级阴影与语义色别名。
+
+   这里只借布局与度量，配色仍走 ClassNote 自己的主题变量，
+   所以切到 DSH 样式后，原来的四套主题照样生效。
+   ============================================================ */
+
+:root {
+  /* 度量常量：两种骨架都能引用，避免组件样式在 legacy 下失去圆角 */
+  --dsw-radius-xs: 4px;
+  --dsw-radius-sm: 8px;
+  --dsw-radius-md: 12px;
+  --dsw-radius-lg: 16px;
+  --dsw-radius-xl: 20px;
+  --dsw-radius-panel: 28px;
+}
+
+:root {
+  /* 语义别名：映射到 ClassNote 的主题变量，所以两套骨架共用同一批颜色 */
+  --dsw-hairline: .5px solid var(--line);
+  --dsw-alias-bg-layer-1: var(--bg);
+  --dsw-alias-bg-layer-2: var(--bg-panel);
+  --dsw-alias-bg-layer-3: var(--bg-side);
+  --dsw-alias-border-l4: var(--line);
+  --dsw-alias-text-1: var(--ink);
+  --dsw-alias-text-2: var(--ink-2);
+  --dsw-alias-text-3: var(--ink-3);
+  --dsw-alias-brand: var(--accent);
+
+  --dsw-elevation-soft: 0 1px 2px rgba(20, 18, 15, .04), 0 6px 18px rgba(20, 18, 15, .06);
+  --dsw-elevation-panel: 0 0 0 .5px var(--line), 0 10px 34px rgba(20, 18, 15, .10);
+}
+
+/* ---------- 骨架：三栏网格 ---------- */
+html[data-ui="dsh"] .app {
+  display: grid;
+  grid-template-columns: 268px minmax(0, 1fr) auto;
+  grid-template-rows: 100vh;
+  height: 100vh;
+  background: var(--bg);
+}
+html[data-ui="dsh"] .rail {
+  grid-column: 1; order: 0;
+  width: auto; flex: none; border-right: var(--dsw-hairline);
+  background: var(--bg-side);
+  padding: 12px 10px 10px;
+  gap: 12px;
+}
+html[data-ui="dsh"] .main { grid-column: 2; position: relative; }
+html[data-ui="dsh"] .inspector {
+  grid-column: 3; width: 336px; flex: none;
+  background: var(--bg-side);
+  border-left: var(--dsw-hairline);
+  padding: 14px 14px 12px;
+}
+html[data-ui="dsh"] .app.rail-collapsed { grid-template-columns: 72px minmax(0, 1fr) auto; }
+html[data-ui="dsh"] .app.rail-collapsed .rail { width: auto; flex-basis: auto; }
+
+/* ---------- 侧栏：像 DSH 的工作区栏 ---------- */
+html[data-ui="dsh"] .rail-brand b {
+  font-family: var(--sans);
+  font-size: 13.5px;
+  font-weight: 650;
+  letter-spacing: .01em;
+}
+html[data-ui="dsh"] .rail-brand span {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+html[data-ui="dsh"] .rail-start {
+  height: 36px;
+  border-radius: var(--dsw-radius-md);
+  font-size: 13px;
+  font-weight: 550;
+  box-shadow: none;
+}
+html[data-ui="dsh"] .rail-start.primary { box-shadow: var(--dsw-elevation-soft); }
+html[data-ui="dsh"] .rail-nav { gap: 2px; }
+html[data-ui="dsh"] .rail-item,
+html[data-ui="dsh"] .rail-group,
+html[data-ui="dsh"] .rail-sub-item {
+  border-radius: var(--dsw-radius-sm);
+  min-height: 34px;
+}
+html[data-ui="dsh"] .rail-item.active,
+html[data-ui="dsh"] .rail-group.active {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  box-shadow: inset 0 0 0 .5px var(--line);
+}
+html[data-ui="dsh"] .rail-badge {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  border-radius: var(--dsw-radius-xs);
+}
+
+/* 会话列表：DSH 的左栏是「工作区 → 会话」，这里放最近课堂 */
+.dsh-sessions { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; }
+.dsh-sessions-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 4px 4px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.dsh-session {
+  display: grid; grid-template-columns: 7px minmax(0, 1fr); gap: 8px;
+  align-items: center; padding: 7px 9px;
+  border-radius: var(--dsw-radius-sm);
+  border: 0; background: transparent; color: var(--ink-2);
+  text-align: left; cursor: pointer; width: 100%;
+  transition: background .15s, color .15s;
+}
+.dsh-session:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); color: var(--ink); }
+.dsh-session.active { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--ink); }
+.dsh-session .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); }
+.dsh-session.active .dot { background: var(--accent); }
+.dsh-session .s-main { min-width: 0; }
+.dsh-session .s-title {
+  font-size: 12.5px; line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dsh-session .s-sub {
+  font-family: var(--mono); font-size: 10px; color: var(--ink-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* 来源标注：借了别人的布局就要写清楚 */
+.dsh-credit {
+  margin-top: auto; padding: 8px 4px 2px;
+  font-size: 10.5px; line-height: 1.5; color: var(--ink-3);
+  border-top: var(--dsw-hairline);
+}
+.dsh-credit a { color: var(--ink-2); text-decoration: none; border-bottom: .5px dotted var(--ink-3); }
+.dsh-credit a:hover { color: var(--accent); }
+.app.rail-collapsed .dsh-sessions,
+.app.rail-collapsed .dsh-credit { display: none; }
+
+/* ---------- 顶栏：会话头 ---------- */
+html[data-ui="dsh"] .topbar {
+  height: 52px; padding: 0 20px;
+  border-bottom: var(--dsw-hairline);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: saturate(1.2) blur(8px);
+  position: sticky; top: 0; z-index: 5;
+}
+html[data-ui="dsh"] .topbar h1 {
+  font-family: var(--sans); font-size: 14.5px; font-weight: 620; letter-spacing: .01em;
+}
+html[data-ui="dsh"] .chip {
+  border: var(--dsw-hairline);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 3px 9px;
+}
+html[data-ui="dsh"] .view-switch {
+  border-radius: var(--dsw-radius-md);
+  border: var(--dsw-hairline);
+  background: var(--bg-panel);
+  padding: 2px;
+}
+html[data-ui="dsh"] .view-switch button { border-radius: var(--dsw-radius-sm); font-size: 12px; }
+html[data-ui="dsh"] .btn {
+  border-radius: var(--dsw-radius-md);
+  border: var(--dsw-hairline);
+  background: var(--bg-panel);
+  box-shadow: none;
+}
+html[data-ui="dsh"] .btn:hover { box-shadow: var(--dsw-elevation-soft); }
+html[data-ui="dsh"] .btn.primary {
+  background: var(--accent); color: #fff; border-color: transparent;
+  box-shadow: var(--dsw-elevation-soft);
+}
+
+/* ---------- 内容区：居中单列，卡片化 ---------- */
+html[data-ui="dsh"] .scroll { padding: 18px 24px 8px; }
+html[data-ui="dsh"] .view { max-width: 820px; margin: 0 auto; }
+html[data-ui="dsh"] .live-hero {
+  border-radius: var(--dsw-radius-xl);
+  border: var(--dsw-hairline);
+  background: var(--bg-panel);
+  box-shadow: var(--dsw-elevation-soft);
+}
+html[data-ui="dsh"] .timeline { gap: 14px; }
+html[data-ui="dsh"] .card {
+  border-radius: var(--dsw-radius-xl);
+  border: var(--dsw-hairline);
+  background: var(--bg-panel);
+  box-shadow: none;
+}
+html[data-ui="dsh"] .card:hover { box-shadow: var(--dsw-elevation-soft); }
+html[data-ui="dsh"] .card-shot,
+html[data-ui="dsh"] .slide-frame,
+html[data-ui="dsh"] .transcript { border-radius: var(--dsw-radius-lg); }
+html[data-ui="dsh"] .card-no,
+html[data-ui="dsh"] .eyebrow,
+html[data-ui="dsh"] .insp-title {
+  font-family: var(--mono);
+  letter-spacing: .1em;
+}
+html[data-ui="dsh"] .point,
+html[data-ui="dsh"] .tag {
+  border-radius: var(--dsw-radius-sm);
+  border: var(--dsw-hairline);
+  background: var(--bg-sunken);
+}
+html[data-ui="dsh"] .panel,
+html[data-ui="dsh"] .hist-card,
+html[data-ui="dsh"] .theme-tile,
+html[data-ui="dsh"] .preset-card {
+  border-radius: var(--dsw-radius-lg);
+  border: var(--dsw-hairline);
+  box-shadow: none;
+}
+
+/* ---------- 底部输入面板：DSH 的 R28 浮起面板 ---------- */
+html[data-ui="dsh"] .composer-wrap {
+  border-top: 0;
+  background: linear-gradient(to top, var(--bg) 62%, transparent);
+  padding: 8px 24px 14px;
+}
+html[data-ui="dsh"] .composer-wrap > .agent-head,
+html[data-ui="dsh"] .composer-wrap > .chat-thread { max-width: 820px; margin-inline: auto; }
+html[data-ui="dsh"] .composer {
+  max-width: 820px; margin: 0 auto;
+  border-radius: var(--dsw-radius-panel);
+  border: 0;
+  background: var(--bg-panel);
+  box-shadow: var(--dsw-elevation-panel);
+  padding: 10px 12px 10px 16px;
+}
+html[data-ui="dsh"] .composer:focus-within {
+  box-shadow: var(--dsw-elevation-panel), 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+html[data-ui="dsh"] .composer textarea { font-size: 13.5px; }
+html[data-ui="dsh"] .send-btn {
+  border-radius: 50%;
+  corner-shape: round;
+  box-shadow: var(--dsw-elevation-soft);
+}
+html[data-ui="dsh"] .composer-tips { max-width: 820px; margin: 6px auto 0; font-family: var(--mono); font-size: 10.5px; }
+
+/* 输入面板上的模型 / 权限小胶囊（DSH 把模型选择放在输入区） */
+.dsh-composer-bar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  max-width: 820px; margin: 0 auto 6px;
+}
+.dsh-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 24px; padding: 0 9px;
+  border-radius: var(--dsw-radius-sm);
+  border: var(--dsw-hairline);
+  background: var(--bg-panel);
+  font-family: var(--mono); font-size: 10.5px; color: var(--ink-2);
+  cursor: pointer;
+}
+.dsh-pill:hover { color: var(--ink); box-shadow: var(--dsw-elevation-soft); }
+.dsh-pill i { width: 5px; height: 5px; border-radius: 50%; background: var(--ok); }
+.dsh-pill.warn i { background: var(--warn); }
+
+/* ---------- Agent 页 ---------- */
+html[data-ui="dsh"] .agent-shell { gap: 12px; }
+html[data-ui="dsh"] .agent-context {
+  border-radius: var(--dsw-radius-lg);
+  border: var(--dsw-hairline);
+  background: var(--bg-panel);
+  font-family: var(--mono); font-size: 10.5px;
+}
+html[data-ui="dsh"] .agent-thread { gap: 14px; }
+html[data-ui="dsh"] .agent-msg {
+  border-radius: var(--dsw-radius-xl);
+  border: var(--dsw-hairline);
+  box-shadow: none;
+}
+html[data-ui="dsh"] .agent-msg.user {
+  border-radius: var(--dsw-radius-lg);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+  border-color: transparent;
+}
+html[data-ui="dsh"] .agent-msg .who { font-family: var(--mono); letter-spacing: .08em; }
+html[data-ui="dsh"] .agent-composer { border-radius: var(--dsw-radius-panel); box-shadow: var(--dsw-elevation-panel); border: 0; }
+
+/* 步骤轨迹：借 DSH 的 tool call 卡片 */
+.agent-steps { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 2px; }
+.agent-step {
+  border: var(--dsw-hairline);
+  border-radius: var(--dsw-radius-md);
+  background: var(--bg-sunken);
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.agent-step-head {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 10.5px; color: var(--ink-3);
+}
+.agent-step-head b { color: var(--ink-2); font-weight: 600; letter-spacing: .02em; }
+.agent-step-body {
+  margin-top: 4px; font-size: 12px; line-height: 1.6;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 168px; overflow-y: auto;
+}
+.agent-step.err { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+.agent-step.ok .agent-step-head b { color: var(--ok); }
+.agent-approval {
+  border: .5px solid color-mix(in srgb, var(--warn) 55%, var(--line));
+  border-radius: var(--dsw-radius-lg);
+  background: color-mix(in srgb, var(--warn) 8%, var(--bg-panel));
+  padding: 10px 12px; margin: 6px 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.agent-approval b { font-size: 12.5px; }
+.agent-approval pre {
+  margin: 0; font-family: var(--mono); font-size: 11px;
+  white-space: pre-wrap; word-break: break-all;
+  max-height: 120px; overflow-y: auto; color: var(--ink-2);
+}
+.agent-approval .row { gap: 8px; }
+
+/* 插件槽位卡片 */
+.plugin-slot {
+  border: var(--dsw-hairline);
+  border-radius: var(--dsw-radius-lg);
+  background: var(--bg-panel);
+  padding: 10px 12px; margin-bottom: 8px;
+  font-size: 12.5px; color: var(--ink-2);
+}
+.plugin-slot b { display: block; font-size: 12.5px; color: var(--ink); margin-bottom: 3px; }
+.plugin-slot a { color: var(--accent); text-decoration: none; }
+
+/* ---------- 插件市场：渠道与能力徽章 ---------- */
+.market-channels { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 8px; }
+.market-channel {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 7px 12px; min-width: 132px;
+  border-radius: var(--dsw-radius-md);
+  border: var(--dsw-hairline);
+  background: var(--bg-panel);
+  cursor: pointer; text-align: left;
+}
+.market-channel b { font-size: 12.5px; }
+.market-channel span { font-size: 10.5px; color: var(--ink-3); font-family: var(--mono); }
+.market-channel.active {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel));
+}
+.cap-row { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+.cap {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .04em;
+  padding: 1px 6px; border-radius: var(--dsw-radius-xs);
+  border: var(--dsw-hairline); color: var(--ink-3); background: var(--bg-sunken);
+}
+.cap.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 42%, var(--line)); }
+.cap.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 42%, var(--line)); }
+
+/* ---------- 样式切换器 ---------- */
+.style-switch {
+  display: flex; gap: 6px; align-items: center;
+  padding: 3px; border-radius: var(--dsw-radius-md);
+  border: var(--dsw-hairline); background: var(--bg-panel);
+}
+.style-switch button {
+  border: 0; background: transparent; cursor: pointer;
+  font-size: 11.5px; padding: 4px 10px; border-radius: var(--dsw-radius-sm);
+  color: var(--ink-3);
+}
+.style-switch button.active { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--ink); }
+.rail-foot .style-switch { width: 100%; justify-content: center; margin-bottom: 6px; }
+
+/* 窄屏：右栏收起，避免课堂上投影仪分辨率小的时候挤成一列字 */
+@media (max-width: 1180px) {
+  html[data-ui="dsh"] .app { grid-template-columns: 236px minmax(0, 1fr); }
+  html[data-ui="dsh"] .inspector { display: none; }
+}
+@media (max-width: 860px) {
+  html[data-ui="dsh"] .app { grid-template-columns: 72px minmax(0, 1fr); }
+  html[data-ui="dsh"] .dsh-sessions, html[data-ui="dsh"] .dsh-credit { display: none; }
+}
+
+/* legacy：不显示 DSH 专属的结构件，保证「旧版 UI」就是旧版 */
+html[data-ui="legacy"] .dsh-sessions,
+html[data-ui="legacy"] .dsh-credit,
+html[data-ui="legacy"] .dsh-composer-bar { display: none; }
+
+/* 样式切换器在两种骨架下都在侧栏底部 */
+html[data-ui="legacy"] .style-switch { margin-bottom: 6px; }
+html[data-ui="legacy"] .style-switch button { font-size: 11.5px; }

@@ -1,11 +1,12 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="claude">
+<html lang="zh-CN" data-theme="claude" data-ui="legacy">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>ClassNote · 课记</title>
 <link rel="stylesheet" href="/assets/css/app.css">
+<link rel="stylesheet" href="/assets/css/dsh.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23C96442'/><path d='M28 30h44M28 50h34M28 70h24' stroke='%23FAF9F5' stroke-width='9' stroke-linecap='round'/></svg>">
 </head>
 <body>
@@ -89,10 +90,11 @@
         <div class="page-head">
           <div>
             <span class="eyebrow">Agent</span>
-            <h2>课堂助手</h2>
-            <p>结合当前课堂的幻灯片、转写与笔记回答；没有课堂时会以通用助手模式工作。</p>
+            <h2>课堂 Agent</h2>
+            <p>会自己读幻灯片的转写与笔记、按需调工具，再给结论；写笔记或出报告前会先问你。</p>
           </div>
           <div class="page-actions">
+            <select id="agent-model" class="btn small" title="本次对话使用的模型"></select>
             <button class="btn small ghost" id="btn-agent-clear">清空</button>
           </div>
         </div>
@@ -120,7 +122,7 @@
           <div>
             <span class="eyebrow">Plugins</span>
             <h2>插件商城</h2>
-            <p>技能包会在启用后并入课堂助手指令；安装只是下载到本机，随时可以停用或删除。</p>
+            <p>插件是声明式的：只声明提示词、要用的工具和界面槽位，由 ClassNote 解释执行，第三方代码不会在本机运行。DSH 渠道收录 DeepSeek Harness 生态的插件索引，可在本机检索、登记并复制安装命令。</p>
           </div>
           <div class="page-actions">
             <button class="btn small" id="pl-refresh">刷新</button>
@@ -129,9 +131,14 @@
         <div class="store-toolbar">
           <input id="pl-search" placeholder="搜索插件名称、用途、作者…">
           <div class="store-tabs" id="pl-tabs">
-            <button data-tab="market" class="active">市场</button>
+            <button data-tab="market" class="active">发现</button>
             <button data-tab="installed">已安装 <span id="pl-count">0</span></button>
           </div>
+        </div>
+        <div class="market-channels" id="pl-channels"></div>
+        <div class="store-toolbar" id="pl-subbar" hidden>
+          <select id="pl-category" style="max-width:200px"><option value="">全部分类</option></select>
+          <span class="hint" id="pl-source"></span>
         </div>
         <div class="store-list" id="pl-list"><div class="side-empty">加载中…</div></div>
       </section>

@@ -193,15 +193,23 @@ type UIConfig struct {
 	FontScale        int           `json:"fontScale"`
 	CustomThemes     []CustomTheme `json:"customThemes,omitempty"`
 	ShowFloatBall    bool          `json:"showFloatBall"`
+	// Style 是界面骨架：legacy（ClassNote 原有布局）| dsh（借鉴 DeepSeek Harness 的布局）
+	Style string `json:"style"`
+	// HideStyleNotice 隐藏 DSH 布局里的来源标注。
+	// 取反命名是刻意的：借鉴别人的设计要写清来源，零值必须是「显示」，
+	// 老配置文件里没有这个字段时才不会默默把标注关掉。
+	HideStyleNotice bool `json:"hideStyleNotice,omitempty"`
 }
 
-// AgentConfig 控制本地 Agent 与技能包。
+// AgentConfig 控制本地 Agent 与插件。
 type AgentConfig struct {
 	// Permission: all 全部访问 | remind 敏感操作提醒 | review 全部人工审查
 	Permission string `json:"permission"`
-	// Model 课堂助手使用的模型（空 = 跟随 provider）
+	// Model 课堂助手使用的模型（空 = 跟随 provider；web:qwen / web:deepseek = 网页版）
 	Model string `json:"model"`
-	// SkillsDir 技能包目录（空 = 数据目录下的 plugins/skills）
+	// MaxSteps 一次 Agent 运行最多几步（工具往返），0 表示用默认 6。
+	MaxSteps int `json:"maxSteps"`
+	// SkillsDir 插件目录（空 = 数据目录下的 plugins/skills）
 	SkillsDir string `json:"skillsDir"`
 }
 
@@ -274,10 +282,12 @@ func Default() Config {
 			ICC:         ICCConfig{Enabled: true, AutoInject: true},
 		},
 		UI: UIConfig{
-			Theme:     "claude",
+			Theme:        "claude",
+			ShowFloatBall: true, // 默认显示；用户在外观里关掉后，normalize 不再强制打开
 			Accent:    "#C96442",
 			Density:   "comfortable",
 			FontScale: 100,
+			Style:     "legacy",
 		},
 	}
 }
@@ -377,10 +387,16 @@ func (c *Config) normalize() {
 	if c.UI.Theme == "" {
 		c.UI.Theme = d.UI.Theme
 	}
-	if !c.UI.ShowFloatBall && c.UI.Theme != "" {
-		// 默认显示悬浮球（用户可在外观设置里关掉）
-		c.UI.ShowFloatBall = true
+	if c.UI.Style == "" {
+		c.UI.Style = "legacy"
 	}
+	if c.UI.Style != "dsh" && c.UI.Style != "legacy" {
+		c.UI.Style = "legacy"
+	}
+	if c.Agent.MaxSteps <= 0 || c.Agent.MaxSteps > 12 {
+		c.Agent.MaxSteps = 6
+	}
+
 	if c.UI.FontScale <= 0 {
 		c.UI.FontScale = 100
 	}

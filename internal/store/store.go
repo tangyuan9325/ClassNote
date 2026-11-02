@@ -150,10 +150,46 @@ func (s *Store) save(sess *Session) error {
 	return os.Rename(tmp, path)
 }
 
+// AppendMessage 往历史课堂里追加一条消息。
+//
+// 只用于已经结束的课堂：正在记录的课堂由 lesson.Engine 持锁写入，
+// 这里 Load+Save 会覆盖掉并发落盘的片段。
+func (s *Store) AppendMessage(id, role, content string) error {
+	sess, err := s.Load(id)
+	if err != nil {
+		return err
+	}
+	if sess.Status == "recording" {
+		return fmt.Errorf("课堂正在记录，请由引擎写入")
+	}
+	sess.Messages = append(sess.Messages, ChatMessage{
+		ID: NewID(time.Now()), Role: role, Content: content, CreatedAt: time.Now(),
+	})
+	return s.Save(sess)
+}
+
+// checkID 校验会话 ID 能否安全地拼进文件名。
+//
+// 会话 ID 由程序生成（时间戳形态），所以这里只放行「字母数字 + - _ .」，
+// 并额外挡掉单独的 ".."：这样 Windows 与 Linux 上都不会有拼接歧义。
+func checkID(id string) error {
+	if id == "" || id == "." || id == ".." || len(id) > 96 {
+		return fmt.Errorf("非法的会话 ID")
+	}
+	for _, r := range id {
+		ok := r == '-' || r == '_' || r == '.' ||
+			(r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+		if !ok {
+			return fmt.Errorf("非法的会话 ID")
+		}
+	}
+	return nil
+}
+
 // Load 读取会话。
 func (s *Store) Load(id string) (*Session, error) {
-	if strings.ContainsAny(id, `/\`) {
-		return nil, fmt.Errorf("非法的会话 ID")
+	if err := checkID(id); err != nil {
+		return nil, err
 	}
 	raw, err := os.ReadFile(filepath.Join(s.dir, id+".json"))
 	if err != nil {
@@ -195,10 +231,10 @@ func (s *Store) List() ([]Meta, error) {
 	return out, nil
 }
 
-// Delete 删除会话及其图片。
+// Delete 删除会话记录（截图目录保留，历史页面里已导出的图片仍可打开）。
 func (s *Store) Delete(id string) error {
-	if strings.ContainsAny(id, `/\`) {
-		return fmt.Errorf("非法的会话 ID")
+	if err := checkID(id); err != nil {
+		return err
 	}
 	_ = os.Remove(filepath.Join(s.dir, id+".json"))
 	return nil

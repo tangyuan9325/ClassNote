@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { $, $$, el, toast, esc } from './util.js';
 import { applyTheme } from './theme.js';
+import { applyUiStyle } from './shell.js';
 
 let S = null;
 let tab = 'model';
@@ -322,7 +323,22 @@ function appearTab(cfg) {
       <input type="color" data-ck="${k}" value="${esc(edit.vars[k] || '#ffffff')}">
       <input class="color-hex" data-ck="${k}" value="${esc(edit.vars[k] || '#ffffff')}" spellcheck="false">
     </div>`;
+  const uiStyle = (cfg.ui && cfg.ui.style) || 'legacy';
   return `
+    <h3>界面样式</h3>
+    <div class="desc">两套骨架共用同一份数据与功能，只是排版不同；切换立即生效，不刷新页面。</div>
+    <div class="theme-grid" style="margin-top:8px">
+      <button class="theme-card ${uiStyle === 'legacy' ? 'active' : ''}" data-ui-style="legacy">
+        <div class="theme-swatch"><i style="background:#f3f1ea"></i><i style="background:#faf9f5"></i><i style="background:#c96442"></i></div>
+        <b>经典</b><span>ClassNote 原有布局</span>
+      </button>
+      <button class="theme-card ${uiStyle === 'dsh' ? 'active' : ''}" data-ui-style="dsh">
+        <div class="theme-swatch"><i style="background:#1f1f1e"></i><i style="background:#2b2b29"></i><i style="background:#d97757"></i></div>
+        <b>DSH</b><span>三栏 + 会话式输入面板</span>
+      </button>
+    </div>
+    <div class="desc" style="margin-top:6px">DSH 布局参考 <a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="noreferrer">DeepSeek Harness</a>（MIT License）的排版与圆角规范，配色仍使用下面的主题。</div>
+
     <h3>主题</h3>
     <div class="desc">界面同时适用于本地窗口与浏览器访问，切换后立即生效。</div>
     <div class="theme-grid">${cards}${customCards}</div>
@@ -548,6 +564,14 @@ function bindNotify() {
 
 function bindAppearance() {
   const cfg = S.cfg;
+  $$('[data-ui-style]').forEach((b) => b.addEventListener('click', () => {
+    const style = b.dataset.uiStyle;
+    cfg.ui.style = style;
+    $$('[data-ui-style]').forEach((x) => x.classList.toggle('active', x === b));
+    applyUiStyle(style);
+    saveConfig(true);
+    toast(style === 'dsh' ? '已切换到 DSH 样式' : '已切换到经典样式', 'ok');
+  }));
   const custom = (cfg.ui.customThemes) || [];
   $$('.theme-card').forEach((b) => b.addEventListener('click', async () => {
     cfg.ui.theme = b.dataset.theme;
@@ -636,34 +660,50 @@ function bindAppearance() {
 }
 
 function agentTab(cfg) {
-  cfg.agent = cfg.agent || { permission: 'remind' };
+  cfg.agent = cfg.agent || { permission: 'remind', maxSteps: 6 };
   const levels = [
     ['all', '全部访问', 'Agent 可直接使用全部本地能力，不再询问'],
-    ['remind', '敏感操作提醒', '涉及写文件 / 执行命令时先提示（推荐）'],
-    ['review', '全部人工审查', '每一步操作都要人工确认'],
+    ['remind', '敏感操作提醒', '写笔记、生成报告前先确认（推荐）'],
+    ['review', '全部人工审查', '每一步工具调用都要人工确认'],
   ];
+  const curModel = cfg.agent.model || '';
+  const modelOpts = (S.agentModels || []).map((m) =>
+    `<option value="${esc(m.id)}" ${m.id === curModel ? 'selected' : ''}>${esc(m.name)}${m.ready ? '' : '（未配置）'}</option>`).join('');
   return `
     <h3>Agent 权限</h3>
-    <div class="desc">控制课堂助手调用本地能力（截图、笔记、报告）时的审批强度。</div>
+    <div class="desc">控制课堂 Agent 调用本地工具（读记录、改笔记、出报告）时的审批强度。</div>
     <div class="seg" id="ag-perm" style="margin:10px 0">
       ${levels.map(([id, name]) => `<button data-v="${id}" class="${cfg.agent.permission === id ? 'active' : ''}">${name}</button>`).join('')}
     </div>
     <div class="desc" id="ag-perm-note">${esc((levels.find((x) => x[0] === cfg.agent.permission) || levels[1])[2])}</div>
 
-    <h3>技能包</h3>
-    <div class="desc">技能包是一段可复用的提示词，启用后会并入课堂助手的指令。放在 <code>data/plugins/skills/</code> 里的 JSON 文件。</div>
+    <h3>模型</h3>
+    <label class="field"><span>Agent 使用的模型</span>
+      <select id="ag-model">
+        <option value="" ${curModel === '' ? 'selected' : ''}>跟随全局设置</option>
+        ${modelOpts.replace(/<option value="" [^>]*>[^<]*<\/option>/, '')}
+      </select>
+    </label>
+    <div class="desc">「网页版」不需要 API Key，用浏览器登录一次即可；它和课堂分析共用同一套登录态。</div>
+
+    <h3>单次运行步数</h3>
+    <label class="field"><span>最多几步（工具往返）</span>
+      <input id="ag-steps" type="number" min="1" max="12" value="${Number(cfg.agent.maxSteps) || 6}">
+    </label>
+    <div class="desc">步数越多越能钻细节，也越慢。默认 6 步，足够「读总览 → 读两页 → 写一条笔记」。</div>
+
+    <h3>插件</h3>
+    <div class="desc">插件只声明提示词、工具与界面槽位，由 ClassNote 解释执行；第三方代码不会在本机运行。插件文件放在 <code>data/plugins/skills/</code>。</div>
     <div id="ag-skills"><div class="desc">加载中…</div></div>
 
-    <h3>模型</h3>
-    <label class="field"><span>课堂助手使用的模型</span>
-      <input id="ag-model" value="${esc(cfg.agent.model || '')}" placeholder="留空则跟随「模型」页的设置">
-    </label>
+    <h3>可用工具</h3>
+    <div class="desc" id="ag-tools">加载中…</div>
   `;
 }
 
 function bindAgent() {
   const cfg = S.cfg;
-  cfg.agent = cfg.agent || { permission: 'remind' };
+  cfg.agent = cfg.agent || { permission: 'remind', maxSteps: 6 };
   $$('#ag-perm button').forEach((b) => b.addEventListener('click', async () => {
     $$('#ag-perm button').forEach((x) => x.classList.remove('active'));
     b.classList.add('active');
@@ -674,12 +714,41 @@ function bindAgent() {
     } catch (e) { toast(e.message, 'err'); }
   }));
   $('#ag-model')?.addEventListener('change', async (e) => {
-    cfg.agent.model = e.target.value.trim();
+    cfg.agent.model = e.target.value;
     try {
       await api.post('/api/agent/permission', { model: cfg.agent.model });
+      toast('模型已切换', 'ok');
     } catch (err) { toast(err.message, 'err'); }
   });
+  $('#ag-steps')?.addEventListener('change', async (e) => {
+    const n = parseInt(e.target.value, 10);
+    if (!n || n < 1 || n > 12) { toast('步数应在 1-12 之间', 'err'); return; }
+    cfg.agent.maxSteps = n;
+    try {
+      await api.post('/api/agent/permission', { maxSteps: n });
+    } catch (err) { toast(err.message, 'err'); }
+  });
+  loadAgentMeta();
   loadSkills();
+}
+
+async function loadAgentMeta() {
+  try {
+    const d = await api.get('/api/agent/info');
+    S.agentModels = d.models || [];
+    const box = $('#ag-tools');
+    if (box) {
+      const tools = d.tools || [];
+      box.innerHTML = tools.length
+        ? tools.map((t) => `<div class="card" style="margin-bottom:6px;padding:8px 10px">
+            <div class="row" style="gap:8px;align-items:center"><b>${esc(t.title || t.name)}</b>
+            <span class="tag">${esc(t.name)}</span>
+            ${t.readOnly ? '<span class="tag">只读</span>' : '<span class="tag">写操作</span>'}</div>
+            <div class="desc" style="margin-top:4px">${esc(t.description || '')}</div>
+          </div>`).join('')
+        : '<div class="desc">没有可用工具</div>';
+    }
+  } catch (e) { /* 忽略 */ }
 }
 
 async function loadSkills() {
@@ -687,30 +756,38 @@ async function loadSkills() {
   if (!box) return;
   try {
     const d = await api.get('/api/plugins');
+    const list = d.skills || [];
     box.innerHTML = '';
-    for (const sk of d.skills || []) {
+    if (!list.length) {
+      box.innerHTML = '<div class="desc">还没有插件，去「发现」页看看</div>';
+      return;
+    }
+    for (const sk of list) {
       const row = document.createElement('div');
       row.className = 'card';
       row.style.marginBottom = '8px';
+      const kind = { skill: '提示词', tool: '工具', ui: '界面', external: 'DSH 引用' }[sk.kind] || '提示词';
+      const caps = (sk.capabilities || []).map((c) => `<span class="cap on">${esc(c)}</span>`).join('');
+      const perms = (sk.permissions || []).map((c) => `<span class="cap">${esc(c)}</span>`).join('');
       row.innerHTML = `
         <div class="row" style="gap:8px;align-items:center">
-          <label class="switch"><input type="checkbox" class="sk-on" data-id="${esc(sk.id)}" ${sk.enabled ? 'checked' : ''}><span></span></label>
+          <label class="switch"><input type="checkbox" class="sk-on" data-id="${esc(sk.id)}" ${sk.enabled ? 'checked' : ''} ${sk.kind === 'external' ? 'disabled' : ''}><i></i></label>
           <b style="flex:1">${esc(sk.name)}</b>
-          ${sk.builtIn ? '<span class="tag">内置</span>' : ''}
+          <span class="tag">${esc(kind)}</span>
+          ${sk.version ? `<span class="tag">v${esc(sk.version)}</span>` : ''}
           <button class="btn small danger sk-del" data-id="${esc(sk.id)}">删除</button>
         </div>
         <div class="desc" style="margin-top:6px">${esc(sk.description || '')}</div>
-        <div class="desc" style="margin-top:4px;opacity:.75">${esc((sk.prompt || '').slice(0, 120))}</div>
-        <div class="desc" style="margin-top:4px">可用工具：${esc((sk.tools || []).join('、') || '无')}</div>`;
+        ${(caps || perms) ? `<div class="cap-row">${caps}${perms}</div>` : ''}
+        <div class="desc" style="margin-top:4px">工具：${esc((sk.tools || []).join('、') || '无')}</div>`;
       box.append(row);
     }
-    if (!(d.skills || []).length) box.innerHTML = '<div class="desc">还没有技能包</div>';
     $$('.sk-on').forEach((el) => el.addEventListener('change', async () => {
       await api.post('/api/plugins/toggle', { id: el.dataset.id, enabled: el.checked });
       toast(el.checked ? '已启用' : '已停用', 'ok');
     }));
     $$('.sk-del').forEach((b) => b.addEventListener('click', async () => {
-      if (!confirm('确定删除技能包 ' + b.dataset.id + ' 吗？')) return;
+      if (!confirm('确定删除插件 ' + b.dataset.id + ' 吗？')) return;
       await api.post('/api/plugins/delete', { id: b.dataset.id });
       loadSkills();
     }));
@@ -1105,6 +1182,12 @@ function readTab(name) {
   if (name === 'appearance') {
     const d = $('#f-density');
     if (d) cfg.ui.density = d.value;
+  }
+  if (name === 'agent') {
+    const st = parseInt(val('#ag-steps'), 10);
+    if (!Number.isNaN(st) && st >= 1 && st <= 12) cfg.agent.maxSteps = st;
+    const m = $('#ag-model');
+    if (m) cfg.agent.model = m.value;
   }
 }
 

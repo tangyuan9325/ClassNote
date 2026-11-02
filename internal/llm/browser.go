@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -90,7 +89,7 @@ func LaunchBrowser(bin, profileDir string, headless bool) (*BrowserProc, error) 
 	}
 	cmd := exec.Command(bin, args...)
 	if headless {
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		hideWindow(cmd)
 	}
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("启动浏览器失败: %w", err)

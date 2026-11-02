@@ -14,6 +14,16 @@
 | github.com/ysmood/fetchup | v0.2.3 | rod 的下载依赖 | MIT |
 | github.com/ysmood/got | v0.40.0 | rod 的测试依赖 | MIT |
 
+## 设计借鉴（未包含源代码）
+
+| 项目 | 借鉴内容 | 许可 |
+| --- | --- | --- |
+| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | 界面布局与视觉规范（栅格比例、圆角阶梯、发丝线、浮起面板层级）、插件清单与市场索引契约、Agent 的 turn/step 与工具审批流程 | MIT |
+| [dsh-plugin-catalog](https://www.npmjs.com/package/dsh-plugin-catalog)（npm） | 插件索引快照，随包分发的 `internal/plugin/dsh-plugins.json.gz` 由此生成 | MIT |
+
+这两个项目只被**参考设计与公开契约**，没有代码被复制进本仓库，也没有引入其运行时。
+ClassNote 不加载任何 npm 包；「DSH」渠道里的插件在本项目内只是引用与安装命令。
+
 ## 运行环境依赖
 
 - **Microsoft Edge / Google Chrome**：用于渲染界面窗口与把报告 HTML 打印为 PDF。
@@ -25,5 +35,5 @@
 
 ## 商标声明
 
-ClassIsland、InkCanvasForClass、WPS Office、Microsoft Office、Qwen、DeepSeek
-均为其各自所有者的商标。本项目与上述项目/公司无隶属关系，也未获得其背书。
+ClassIsland、InkCanvasForClass、WPS Office、Microsoft Office、Qwen、DeepSeek、
+DeepSeek Harness 均为其各自所有者的商标。本项目与上述项目/公司无隶属关系，也未获得其背书。

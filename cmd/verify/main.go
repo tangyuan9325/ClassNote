@@ -352,6 +352,162 @@ func main() {
 		return fmt.Sprintf("技能包市场 %d 项 · 一键更新接口就绪", len(m.Skills)), nil
 	})
 
+	c.check("插件清单（schemaVersion 2）", func() (string, error) {
+		var d struct {
+			Skills []struct {
+				ID            string   `json:"id"`
+				Kind          string   `json:"kind"`
+				Version       string   `json:"version"`
+				SchemaVersion int      `json:"schemaVersion"`
+				Capabilities  []string `json:"capabilities"`
+			} `json:"skills"`
+			Slots  []any `json:"slots"`
+			Broken []struct {
+				File   string `json:"file"`
+				Reason string `json:"reason"`
+			} `json:"broken"`
+		}
+		if err := c.getJSON("/api/plugins", &d); err != nil {
+			return "", err
+		}
+		for _, p := range d.Skills {
+			if p.Kind == "" || p.SchemaVersion == 0 {
+				return "", fmt.Errorf("插件 %s 未迁移到 v2（kind=%q schema=%d）", p.ID, p.Kind, p.SchemaVersion)
+			}
+		}
+		detail := fmt.Sprintf("%d 个插件 · 槽位 %d · 读取失败 %d", len(d.Skills), len(d.Slots), len(d.Broken))
+		if len(d.Broken) > 0 {
+			return detail, fmt.Errorf("%s（%s: %s）", detail, d.Broken[0].File, d.Broken[0].Reason)
+		}
+		return detail, nil
+	})
+
+	c.check("Agent 工具与模型", func() (string, error) {
+		var d struct {
+			Models []struct {
+				ID    string `json:"id"`
+				Ready bool   `json:"ready"`
+			} `json:"models"`
+			ToolNames []string `json:"toolNames"`
+			MaxSteps  int      `json:"maxSteps"`
+			Levels    []any    `json:"levels"`
+		}
+		if err := c.getJSON("/api/agent/info", &d); err != nil {
+			return "", err
+		}
+		has := map[string]bool{}
+		for _, m := range d.Models {
+			has[m.ID] = true
+		}
+		if !has["web:qwen"] || !has["web:deepseek"] {
+			return "", fmt.Errorf("模型目录缺少网页版 Qwen / DeepSeek：%v", has)
+		}
+		if len(d.ToolNames) < 7 {
+			return "", fmt.Errorf("Agent 只注册了 %d 个工具", len(d.ToolNames))
+		}
+		if d.MaxSteps < 1 || d.MaxSteps > 12 {
+			return "", fmt.Errorf("步数上限异常：%d", d.MaxSteps)
+		}
+		return fmt.Sprintf("%d 个工具 · %d 个模型 · 步数上限 %d", len(d.ToolNames), len(d.Models), d.MaxSteps), nil
+	})
+
+	c.check("插件市场双渠道", func() (string, error) {
+		var cn struct {
+			OK       bool   `json:"ok"`
+			Total    int    `json:"total"`
+			Channel  string `json:"channel"`
+			Channels []struct {
+				ID    string `json:"id"`
+				Count int    `json:"count"`
+			} `json:"channels"`
+		}
+		if err := c.getJSON("/api/plugins/market?channel=classnote", &cn); err != nil {
+			return "", err
+		}
+		if !cn.OK || cn.Total == 0 {
+			return "", fmt.Errorf("ClassNote 渠道为空")
+		}
+		var dsh struct {
+			OK    bool `json:"ok"`
+			Total int  `json:"total"`
+			Items []struct {
+				ID  string `json:"id"`
+				URL string `json:"url"`
+			} `json:"items"`
+			Categories map[string]string `json:"categories"`
+		}
+		if err := c.getJSON("/api/plugins/market?channel=dsh&limit=20", &dsh); err != nil {
+			return "", err
+		}
+		if !dsh.OK || dsh.Total < 1000 {
+			return "", fmt.Errorf("DSH 渠道条目过少：%d", dsh.Total)
+		}
+		for _, it := range dsh.Items {
+			if it.URL == "" {
+				return "", fmt.Errorf("DSH 条目 %s 缺少仓库地址", it.ID)
+			}
+		}
+		return fmt.Sprintf("ClassNote %d 项 · DSH %d 项 / %d 类 · %d 个渠道", cn.Total, dsh.Total, len(dsh.Categories), len(cn.Channels)), nil
+	})
+
+	c.check("界面样式切换", func() (string, error) {
+		var boot struct {
+			Config struct {
+				Config struct {
+					UI struct {
+						Style string `json:"style"`
+					} `json:"ui"`
+				} `json:"config"`
+			} `json:"config"`
+		}
+		if err := c.getJSON("/api/bootstrap", &boot); err != nil {
+			return "", err
+		}
+		orig := boot.Config.Config.UI.Style
+		if orig == "" {
+			return "", fmt.Errorf("配置里没有 ui.style")
+		}
+		apply := func(style string) error {
+			var cfg struct {
+				Config struct {
+					Config map[string]any `json:"config"`
+				} `json:"config"`
+			}
+			if err := c.getJSON("/api/bootstrap", &cfg); err != nil {
+				return err
+			}
+			body := cfg.Config.Config
+			if ui, ok := body["ui"].(map[string]any); ok {
+				ui["style"] = style
+			} else {
+				return fmt.Errorf("配置结构异常")
+			}
+			var out struct {
+				Config struct {
+					Config struct {
+						UI struct {
+							Style string `json:"style"`
+						} `json:"ui"`
+					} `json:"config"`
+				} `json:"config"`
+			}
+			if err := c.postJSON("/api/config", body, &out); err != nil {
+				return err
+			}
+			if out.Config.Config.UI.Style != style {
+				return fmt.Errorf("写入 %s 后读回 %q", style, out.Config.Config.UI.Style)
+			}
+			return nil
+		}
+		if err := apply("dsh"); err != nil {
+			return "", err
+		}
+		if err := apply("legacy"); err != nil {
+			return "", err
+		}
+		return "可在 legacy / dsh 之间双向切换并落盘", nil
+	})
+
 	c.check("ClassIsland 注入插件", func() (string, error) {
 		var d struct {
 			Installed bool   `json:"installed"`

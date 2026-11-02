@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"classnote/internal/app"
+	"classnote/internal/appinfo"
 )
 
 // Asset 是 Release 里的一个附件。
@@ -44,7 +44,7 @@ var cli = &http.Client{Timeout: 20 * time.Second}
 //
 // repo 形如 "owner/name"；token 可选（私有仓库需要）。
 func Check(repo, token string) Info {
-	cur := strings.TrimPrefix(app.Version, "v")
+	cur := strings.TrimPrefix(appinfo.Version, "v")
 	out := Info{Checked: true, Current: cur}
 	if repo == "" {
 		out.Error = "未配置仓库地址"

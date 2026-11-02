@@ -88,6 +88,7 @@ const (
 	swpNoActivate  = 0x0010
 	swpShowWindow  = 0x0040
 	swShowNoActive = 4
+	swHide         = 0
 
 	smCxScreen = 0
 	smCyScreen = 1
@@ -118,7 +119,8 @@ type FloatBall struct {
 	mu       sync.Mutex
 	hwnd     windows.Handle
 	expanded bool
-	anim     int // 0..fbAnimFrames，0=收起
+	anim     int  // 0..fbAnimFrames，0=收起
+	hidden   bool // 放映幻灯片时临时隐藏，避免挡住课件
 	status   FloatBallStatus
 	x, y     int32 // 窗口左上角（物理像素），展开时靠右边缘定位
 	winW     int32 // 当前窗口宽度，用于展开/收拢时保持右边缘
@@ -169,6 +171,29 @@ func (f *FloatBall) Stop() {
 		case <-time.After(2 * time.Second):
 		}
 	})
+}
+
+// SetVisible 隐藏 / 显示悬浮球。
+//
+// 老师全屏放映时，一个常驻置顶的小球会压在课件角上；这时应当让路。
+// 隐藏期间仍然接收状态更新，恢复时立刻画出来。
+func (f *FloatBall) SetVisible(v bool) {
+	f.mu.Lock()
+	if f.hidden == !v {
+		f.mu.Unlock()
+		return
+	}
+	f.hidden = !v
+	h := f.hwnd
+	f.mu.Unlock()
+	if h == 0 {
+		return
+	}
+	if v {
+		procFBShowWindow.Call(uintptr(h), swShowNoActive)
+	} else {
+		procFBShowWindow.Call(uintptr(h), swHide)
+	}
 }
 
 // SetStatus 更新悬浮球显示。
@@ -344,6 +369,18 @@ func fbWndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 
 // tick 每帧：拉状态、做展开动画、重绘。
 func (f *FloatBall) tick(hwnd windows.Handle) {
+	f.mu.Lock()
+	hidden := f.hidden
+	f.mu.Unlock()
+	if hidden {
+		// 放映中让路：只更新状态，不绘制、不挪位置。
+		if f.opts.Status != nil {
+			f.mu.Lock()
+			f.status = f.opts.Status()
+			f.mu.Unlock()
+		}
+		return
+	}
 	if f.opts.Status != nil {
 		f.mu.Lock()
 		f.status = f.opts.Status()

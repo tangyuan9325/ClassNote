@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"classnote/internal/app"
+	"classnote/internal/appinfo"
 	"classnote/internal/asr"
 	"classnote/internal/audio"
 	"classnote/internal/capture"
@@ -52,7 +52,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	_ = s.Client()
 	writeJSON(w, map[string]any{
 		"app": map[string]any{
-			"version": app.Version, "build": app.BuildTime, "platform": app.Platform(),
+			"version": appinfo.Version, "build": appinfo.BuildTime, "platform": appinfo.Platform(),
 			"paths": s.paths, "port": s.port, "url": s.URL(), "pid": os.Getpid(),
 			"onboarded": cfg.Onboarded,
 		},
@@ -851,14 +851,22 @@ func (s *Server) handleThemeMarket(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "themes": items})
 }
 
-// handlePluginsList 列出技能包。
+// handlePluginsList 列出插件、槽位与读取失败的插件文件。
 func (s *Server) handlePluginsList(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]any{"skills": s.plugins.List(), "dir": s.plugins.Dir()})
+	snap := s.plugins.Snapshot()
+	writeJSON(w, map[string]any{
+		"skills": s.plugins.List(),
+		"slots":  snap.Slots,
+		"broken": snap.Broken,
+		"grants": snap.Grants,
+		"dir":    s.plugins.Dir(),
+		"count":  len(s.plugins.List()),
+	})
 }
 
-// handlePluginSave 保存技能包。
+// handlePluginSave 保存插件（会走 schemaVersion 2 的校验）。
 func (s *Server) handlePluginSave(w http.ResponseWriter, r *http.Request) {
-	var sk plugin.Skill
+	var sk plugin.Plugin
 	if err := readJSON(r, &sk); err != nil {
 		writeErr(w, 400, err)
 		return
@@ -867,10 +875,11 @@ func (s *Server) handlePluginSave(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
+	s.syncPluginPrompt()
 	writeJSON(w, map[string]any{"ok": true, "skills": s.plugins.List()})
 }
 
-// handlePluginToggle 开关技能包。
+// handlePluginToggle 开关插件。
 func (s *Server) handlePluginToggle(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ID      string `json:"id"`
@@ -881,13 +890,14 @@ func (s *Server) handlePluginToggle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.plugins.SetEnabled(body.ID, body.Enabled) {
-		writeErr(w, 404, fmt.Errorf("找不到技能包 %s", body.ID))
+		writeErr(w, 404, fmt.Errorf("找不到插件 %s", body.ID))
 		return
 	}
+	s.syncPluginPrompt()
 	writeJSON(w, map[string]any{"ok": true, "skills": s.plugins.List()})
 }
 
-// handlePluginDelete 删除技能包。
+// handlePluginDelete 删除插件。
 func (s *Server) handlePluginDelete(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ID string `json:"id"`
@@ -900,24 +910,52 @@ func (s *Server) handlePluginDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
+	s.syncPluginPrompt()
 	writeJSON(w, map[string]any{"ok": true, "skills": s.plugins.List()})
 }
 
-// handlePluginMarket 拉取技能包市场清单。
-func (s *Server) handlePluginMarket(w http.ResponseWriter, r *http.Request) {
-	items, err := plugin.Market(r.URL.Query().Get("url"))
-	if err != nil {
-		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "skills": items})
+// handlePluginUninstall 是卸载的别名，语义更贴近界面上的「卸载」。
+func (s *Server) handlePluginUninstall(w http.ResponseWriter, r *http.Request) {
+	s.handlePluginDelete(w, r)
 }
 
-// handlePluginInstall 从市场安装技能包。
+// handlePluginSlots 返回界面槽位，前端按槽位渲染插件卡片。
+func (s *Server) handlePluginSlots(w http.ResponseWriter, r *http.Request) {
+	snap := s.plugins.Snapshot()
+	writeJSON(w, map[string]any{"ok": true, "slots": snap.Slots, "events": snap.Events})
+}
+
+// dshCachePath 是 DSH 插件索引的离线缓存位置。
+func (s *Server) dshCachePath() string {
+	return filepath.Join(s.paths.Root, "data", "cache", "dsh-plugins.json")
+}
+
+// handlePluginMarket 按渠道拉取市场清单。
+//
+// 渠道：classnote（本机技能包市场）| dsh（DeepSeek Harness 插件索引）。
+func (s *Server) handlePluginMarket(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	channel := q.Get("channel")
+	res := s.plugins.Market(channel, q.Get("q"), q.Get("category"), atoiDefault(q.Get("limit"), 200), 2000,
+		s.dshCachePath(), q.Get("url"))
+	res.Categories = plugin.Categories()
+	writeJSON(w, map[string]any{
+		"ok": true, "channel": res.Channel, "channels": res.Channels,
+		"items": res.Items, "skills": res.Items, "total": res.Total,
+		"categories": res.Categories, "categoryList": plugin.CategoryList(),
+		"source": res.Source, "stale": res.Stale, "error": res.Error,
+	})
+}
+
+// handlePluginInstall 从市场安装插件。
+//
+// ClassNote 渠道装的是提示词型插件，立刻可用；
+// DSH 渠道装的是「引用」：登记仓库地址与安装命令，实际运行仍需要 DSH。
 func (s *Server) handlePluginInstall(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		ID   string            `json:"id"`
-		Item plugin.MarketItem `json:"item"`
+		ID      string            `json:"id"`
+		Channel string            `json:"channel"`
+		Item    plugin.MarketItem `json:"item"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeErr(w, 400, err)
@@ -931,20 +969,37 @@ func (s *Server) handlePluginInstall(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, fmt.Errorf("缺少 id"))
 		return
 	}
-	// 未给完整内容时从市场清单里找
-	if item.Prompt == "" {
-		items, err := plugin.Market("")
-		if err == nil {
-			for _, m := range items {
-				if m.ID == item.ID {
-					item = m
-					break
+	channel := body.Channel
+	if channel == "" {
+		channel = item.Channel
+	}
+	if channel == "" {
+		channel = plugin.ChannelClassNote
+	}
+	if item.Prompt == "" || item.Kind == "" {
+		res := s.plugins.Market(channel, item.ID, "", 50, 50, s.dshCachePath(), "")
+		for _, m := range res.Items {
+			if m.ID == item.ID {
+				// 保留调用方给的展示字段，其余用市场里的补齐。
+				if item.Name == "" {
+					item.Name = m.Name
 				}
+				if item.Description == "" {
+					item.Description = m.Description
+				}
+				item.Prompt, item.Tools, item.URL = m.Prompt, m.Tools, m.URL
+				item.Kind = m.Kind
+				item.Version, item.Category, item.Package = m.Version, m.Category, m.Package
+				item.License, item.Homepage = m.License, m.Homepage
+				break
 			}
 		}
 	}
-	if item.Prompt == "" {
-		writeErr(w, 400, fmt.Errorf("市场里没有 %s 的内容", item.ID))
+	if item.Kind == "" {
+		item.Kind = plugin.KindSkill
+	}
+	if item.Kind == plugin.KindSkill && item.Prompt == "" {
+		writeErr(w, 400, fmt.Errorf("市场里没有 %s 的提示词内容", item.ID))
 		return
 	}
 	sk, err := s.plugins.Install(item)
@@ -952,165 +1007,31 @@ func (s *Server) handlePluginInstall(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err)
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "skill": sk, "skills": s.plugins.List()})
-}
-
-// handleAgentInfo 返回 Agent 权限与可用工具。
-// handleAgentChat 是独立 Agent 页的对话入口：
-// 有 sessionId 时带上该堂课的笔记与转写，没有时以通用助手模式回答。
-func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Question  string `json:"question"`
-		SessionID string `json:"sessionId"`
-		History   []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"history"`
-	}
-	if err := readJSON(r, &body); err != nil {
-		writeErr(w, 400, err)
-		return
-	}
-	if strings.TrimSpace(body.Question) == "" {
-		writeErr(w, 400, fmt.Errorf("问题不能为空"))
-		return
-	}
-	client := s.Client()
-	if client == nil {
-		c, err := s.RefreshClient()
-		if err != nil {
-			writeErr(w, 400, err)
-			return
-		}
-		client = c
-	}
-	sys := "你是 ClassNote（课记）的课堂助手，服务对象是正在上课或刚下课的老师。" +
-		"回答用简体中文，直接给结论和可执行的建议，不要寒暄，不要复述问题。"
-	ctxText := ""
-	mode := "general"
-	if body.SessionID != "" {
-		if sess, err := s.store.Load(body.SessionID); err == nil {
-			ctxText = sessionContext(sess, 6000)
-			mode = "session"
-			sys += "\n\n你会看到这堂课的幻灯片要点、笔记与录音片段。回答要紧扣这些材料，" +
-				"材料里没有的信息要明确说「这堂课没有记录到」，不要编造。"
-		}
-	}
-	if s.plugins != nil {
-		if p := strings.TrimSpace(s.plugins.Prompt()); p != "" {
-			sys += "\n\n# 已启用的技能包\n" + p
-		}
-	}
-	msgs := []llm.Message{llm.TextMessage(llm.RoleSystem, sys)}
-	start := len(body.History) - 10
-	if start < 0 {
-		start = 0
-	}
-	for _, h := range body.History[start:] {
-		if strings.TrimSpace(h.Content) == "" {
-			continue
-		}
-		role := llm.RoleAssistant
-		if h.Role == "user" {
-			role = llm.RoleUser
-		}
-		msgs = append(msgs, llm.TextMessage(role, h.Content))
-	}
-	q := body.Question
-	if ctxText != "" {
-		q = "课堂材料：\n" + ctxText + "\n\n老师的问题：" + body.Question
-	}
-	msgs = append(msgs, llm.UserText(q))
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-	res, err := client.Chat(ctx, msgs, llm.Options{Subject: "课堂助手", Temperature: 0.5, MaxTokens: 2048})
-	if err != nil {
-		writeErr(w, 500, err)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "answer": res.Text, "mode": mode})
-}
-
-// sessionContext 把一堂课压成适合放进提示词的材料。
-func sessionContext(sess *store.Session, limit int) string {
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "学科：%s\n课题：%s\n", sess.Subject, sess.Title)
-	for _, seg := range sess.Segments {
-		if seg.Summary == "" && seg.Notes == "" && seg.Transcript == "" {
-			continue
-		}
-		fmt.Fprintf(&sb, "\n--- 第 %d 页 ---\n", seg.Index)
-		if seg.Summary != "" {
-			fmt.Fprintf(&sb, "要点：%s\n", seg.Summary)
-		}
-		if seg.Notes != "" {
-			fmt.Fprintf(&sb, "笔记：%s\n", clipRunes(seg.Notes, 600))
-		}
-		if seg.Transcript != "" {
-			fmt.Fprintf(&sb, "录音：%s\n", clipRunes(seg.Transcript, 700))
-		}
-		if sb.Len() > limit*2 {
-			break
-		}
-	}
-	out := sb.String()
-	if len([]rune(out)) > limit {
-		out = string([]rune(out)[:limit])
-	}
-	return out
-}
-
-func clipRunes(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "…"
-}
-
-func (s *Server) handleAgentInfo(w http.ResponseWriter, r *http.Request) {
-	cfg := s.cfg.Get()
+	s.syncPluginPrompt()
 	writeJSON(w, map[string]any{
-		"permission": cfg.Agent.Permission,
-		"model":      cfg.Agent.Model,
-		"tools":      s.plugins.Tools(),
-		"skills":     len(s.plugins.Enabled()),
-		"levels": []map[string]string{
-			{"id": "all", "name": "全部访问", "note": "Agent 可直接使用全部本地能力，不再询问"},
-			{"id": "remind", "name": "敏感操作提醒", "note": "涉及写文件/执行命令时先提示（推荐）"},
-			{"id": "review", "name": "全部人工审查", "note": "每一步操作都要人工确认"},
-		},
+		"ok": true, "skill": sk, "skills": s.plugins.List(),
+		"command": plugin.InstallCommand(item),
 	})
 }
 
-// handleAgentPermission 修改 Agent 权限级别。
-func (s *Server) handleAgentPermission(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Permission string `json:"permission"`
-		Model      string `json:"model"`
+func atoiDefault(s string, def int) int {
+	if s == "" {
+		return def
 	}
-	if err := readJSON(r, &body); err != nil {
-		writeErr(w, 400, err)
-		return
-	}
-	if body.Permission != "" && body.Permission != "all" && body.Permission != "remind" && body.Permission != "review" {
-		writeErr(w, 400, fmt.Errorf("权限级别只能是 all / remind / review"))
-		return
-	}
-	cfg, err := s.cfg.Update(func(c *config.Config) error {
-		if body.Permission != "" {
-			c.Agent.Permission = body.Permission
+	n := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return def
 		}
-		if body.Model != "" {
-			c.Agent.Model = body.Model
+		n = n*10 + int(c-'0')
+		if n > 100000 {
+			return def
 		}
-		return nil
-	})
-	if err != nil {
-		writeErr(w, 500, err)
-		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "permission": cfg.Agent.Permission, "model": cfg.Agent.Model})
+	if n <= 0 {
+		return def
+	}
+	return n
 }
 
 func (s *Server) handleMicTest(w http.ResponseWriter, r *http.Request) {

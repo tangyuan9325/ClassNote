@@ -4,6 +4,8 @@
 
 ClassNote 面向真实的教学环境设计：它不要求教师改变上课习惯，也不需要把课堂内容上传到某个云端平台。程序以 Go 编写，单文件运行，界面是本地网页，数据全部保存在程序所在目录。
 
+**当前版本 v1.2.7** —— 插件升级为声明式 v2 模型、插件市场接入双渠道（ClassNote / DeepSeek Harness）、课堂 Agent 换成真的会调用工具的多步运行时、新增经典 / DSH 两套界面样式切换。详见[更新日志](#更新日志)。
+
 ![主界面](docs/images/main.png)
 
 ---
@@ -13,12 +15,16 @@ ClassNote 面向真实的教学环境设计：它不要求教师改变上课习�
 - [它能做什么](#它能做什么)
 - [30 秒上手](#30-秒上手)
 - [工作原理](#工作原理)
+- [课堂 Agent](#课堂-agent)
+- [插件（v2）与插件市场](#插件v2与插件市场)
+- [界面样式：经典 / DSH](#界面样式经典--dsh)
 - [配置说明](#配置说明)
 - [与 ClassIsland / InkCanvasForClass 联动](#与-classisland--inkcanvasforclass-联动)
 - [数据目录](#数据目录)
 - [构建](#构建)
 - [已知限制](#已知限制)
 - [常见问题](#常见问题)
+- [更新日志](#更新日志)
 - [开源许可](#开源许可)
 
 ---
@@ -43,10 +49,13 @@ ClassNote 面向真实的教学环境设计：它不要求教师改变上课习�
 | **局域网访问** | 手机/平板用带密钥的链接访问；密钥随机生成、可改可持久化，非回环请求强制校验 |
 | **机器人通知** | 企业微信 / 钉钉 / 飞书 / Telegram / Server酱 / Discord / Slack / Bark / PushPlus / ntfy / Gotify / 自定义 Webhook，快速添加可搜索 |
 | **主题商店** | 4 套内置 + 自定义取色编辑（实时预览）+ 导出导入 + 社区主题一键安装 |
-| **插件商城** | 市场 / 已安装双标签，搜索、安装、启停、编辑提示词；下载量与评分展示 |
+| **插件市场（双渠道）** | 「ClassNote」渠道装本地插件，装完即用；「DSH」渠道可浏览 DeepSeek Harness 的 4100+ 插件，一键复制安装命令或登记到本机 |
+| **插件（v2 声明式）** | 插件不再只是一段提示词：可声明身份、类型（提示词 / 工具 / 界面 / 外部引用）、能力面、最小权限、界面槽位与事件订阅，由宿主解释执行，**不加载任何第三方可执行代码** |
+| **课堂 Agent** | 真的会调用工具的多步 Agent：读课、翻页检索、写笔记、生成报告、查课表。模型列表自带**网页版 Qwen / DeepSeek**（免 API Key），也可走任意 OpenAI 兼容接口 |
+| **界面样式切换** | 设置 → 外观里一键切换「经典」（1.2.6 及以前的布局）与「DSH」（借鉴 DeepSeek Harness 的会话栏 + 浮起输入区布局），随时可切回 |
 | **Agent 页** | 独立聊天页：课堂上下文模式 + 通用模式，快捷问题，按课保存对话 |
 | **Agent 对话** | 主页随时向 Agent 提问，对话记录按课保存；历史课堂下可展开每节课的对话记录 |
-| **技能包与权限** | 本地技能包（JSON）注入课堂助手指令；权限三档：全部访问 / 敏感提醒 / 人工审查 |
+| **权限闸门** | 权限三档：全部访问 / 敏感提醒 / 人工审查；写笔记与生成报告默认要先批准，审批凭证随机生成、一次性有效 |
 | **一键更新** | 关于页检查新版本后直接下载更新包、安装并重启，全程不离开应用 |
 | **双端 UI** | 同一套界面既能在本地应用窗口打开，也能用浏览器访问；四套主题（羊皮纸 / 石墨 / 雾蓝 / 松林） |
 
@@ -111,6 +120,118 @@ ClassNote.exe [参数]
 2. **画面文字优先从 PPTX 里读。** `.pptx` 本质是 zip + XML，直接解析 `ppt/slides/slideN.xml` 里的文本节点，比截图 OCR 准，也不需要额外依赖；文件读不到时再依赖模型看图。
 3. **COM 优先，截图兜底。** PowerPoint / WPS 的 COM 接口能拿到精确页码并导出干净的原图；接口不可用或被占用时，退回到 `PrintWindow`（能穿透其它置顶窗口）再退到屏幕 BitBlt。
 4. **单进程、无 cgo。** 屏幕捕获、录音、COM、浏览器自动化全部走系统 API 或纯 Go 实现，`go build` 即可产出单文件。
+
+---
+
+## 课堂 Agent
+
+1.2.7 把「跟你聊两句」的 Agent 换成了真的会动手的那种：**一步只做一件事，做完看结果，再决定下一步**。
+
+### 它怎么跑
+
+```text
+问题 ──► 模型（只输出一个 JSON 动作）
+          │
+          ├─ {"thought":"…","tool":"lesson.search","args":{"q":"荷塘"}}
+          │        │
+          │        ├─ 权限闸门：这个工具要写笔记吗？要就发审批卡，老师点「允许」才执行
+          │        ├─ 执行工具（45 秒超时，panic 会被兜住）
+          │        └─ 把结果压成 2400 字观察，喂回模型，进入下一步
+          │
+          └─ {"thought":"…","final":"给老师看的回答"} ──► 结束
+```
+
+- **JSON 动作协议**：模型每步只回 `{"thought","tool","args"}` 或 `{"thought","final"}`。这样连没有 function calling 的网页版模型也能当 Agent 用（本项目要自带网页版 Qwen / DeepSeek，就是为了免 API Key 也能跑）。
+- **步数上限**：默认 6 步，可设 1–12。用尽后不再无限绕圈，直接要求模型给出当前结论。
+- **重复调用检测**：同一步的工具 + 参数如果和之前完全一样，判定为空转，中止并回一句说明，避免「反复读同一页」烧额度。
+- **单飞**：同一时刻只跑一个 turn。老师连点发送键不会同时烧两份额度，也不会让两个写操作在课堂记录上互相覆盖。
+- **会话作用域由宿主决定**：模型不能自己指定 `sessionId`。它说「读三年二班的记录」也只能读到当前这堂课 —— 这条有专门的单元测试盯着（`TestAgentIgnoresModelSessionID`）。
+
+### 内置工具
+
+| 工具 | 能力 | 性质 |
+| --- | --- | --- |
+| `lesson.overview` | 这堂课的整体情况：页数、时长、字数、报告状态 | 只读 |
+| `lesson.read_page` | 读某一页的画面文字、转写、已有笔记 | 只读 |
+| `lesson.search` | 在全课转写与笔记里搜关键词 | 只读 |
+| `notes.append` | 给某一页追加笔记 | **写入，需审批** |
+| `notes.update` | 重写某一页的笔记与小结 | **写入，需审批** |
+| `report.generate` | 生成课堂报告（HTML + PDF） | **写入，需审批** |
+| `timetable.today` | 今日课表与当前节次 | 只读 |
+| `plugin.list` | 当前装了哪些插件、各自能用什么 | 只读 |
+
+Agent 拿不到文件系统，也拿不到命令行 —— 这不是「暂时没做」，是刻意不给。`Host` 接口只暴露这 8 件事。
+
+### 模型
+
+设置 → Agent 里的模型列表固定前三项：
+
+1. **跟随全局设置**
+2. **网页版 Qwen**（`web:qwen`，免 API Key，走已登录的浏览器会话）
+3. **网页版 DeepSeek**（`web:deepseek`，同上）
+
+后面才是你配置的 `api:<模型名>`。网页版模式复用固定的浏览器 profile，登录一次就一直可用。
+
+---
+
+## 插件（v2）与插件市场
+
+### 「插件」在 1.2.7 里的定义
+
+1.2.6 及以前，所谓插件其实只是一个 JSON，里面一段 prompt 会被拼进系统提示词 —— 那更接近**技能包**。1.2.7 把它升级成有身份、有边界、有权限的插件清单（`schemaVersion: 2`）：
+
+```json
+{
+  "schemaVersion": 2,
+  "id": "note-assistant",
+  "name": "随堂笔记助手",
+  "version": "1.2.0",
+  "kind": "skill",
+  "capabilities": ["prompt", "tools"],
+  "permissions": ["read:lesson", "write:report"],
+  "tools": ["lesson.read_page", "notes.append"],
+  "ui": { "slot": "statusbar", "title": "笔记助手" },
+  "events": ["lesson.start", "slide.change"]
+}
+```
+
+- **kind**：`skill`（提示词）/ `tool`（给 Agent 加工具）/ `ui`（占界面槽位）/ `external`（DSH 插件的引用，不启用、不注入提示词）。
+- **capabilities**：这个插件**想用**哪些能力面（prompt / tools / ui / events）。
+- **permissions**：它**声明**需要哪些最小权限（读课、写笔记、读报告、写报告、读课表、调模型、占界面）。`Normalize()` 会按 kind 与 capabilities 推导出最小集合，不会默认给全量。
+- **ui.slot**：只能填 `statusbar` / `dashboard` / `settings` / `agent` 四个固定槽位 —— 插件不能自己往页面里塞任意 DOM。
+- **外部链接只允许 https**，`kind: external` 必须有来源地址。
+
+关键取舍：**插件里没有一行可执行代码**。DSH 的插件是真正的 npm 包，装进来就在宿主进程里跑；ClassNote 面向的是老师的办公电脑，所以只让插件**声明**、由宿主**解释**。装一个插件最多改到提示词、工具白名单和一个固定槽位，改不到文件系统。
+
+> 迁移：老的 v1 插件文件不用动。`reload()` 会原样读入、自动补成 v2 并落盘，`Skill = Plugin` 的类型别名也保留着。
+
+### 市场双渠道
+
+「发现」页顶部有两个渠道：
+
+| 渠道 | 内容 | 安装后 |
+| --- | --- | --- |
+| **ClassNote** | 本项目的插件清单（内置 + 仓库 `skills.json`） | 立刻可用，装完即生效 |
+| **DSH** | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的插件索引：**4104 个插件、23 个分类** | 显示「复制安装命令」（`dsh plugin --profile web add <包名>`）与「登记到本机」；实际运行需要装 DSH |
+
+- DSH 渠道的索引是**内置快照**（`internal/plugin/dsh-plugins.json.gz`，578 KB），来自 npm 包 `dsh-plugin-catalog`（format 1），随程序分发，断网也能浏览；后台每 24 小时才试着更新一次。
+- ClassNote 渠道走「缓存 + 后台刷新」（10 分钟 TTL），接口**从不等待网络**。之前每敲一个字就同步打一次 GitHub，断网时每次卡十几秒，属于会直接影响上课的 bug，已修。
+- 索引地址只接受 https，且会拒绝回环 / 私网 / 链路本地地址，避免有人用一条 query 让本机去请求内网。
+
+---
+
+## 界面样式：经典 / DSH
+
+设置 → 外观 → 「界面样式」两张卡片，随时切换：
+
+| 样式 | 说明 |
+| --- | --- |
+| **经典** | 1.2.6 及以前的左侧竖栏布局，功能位置一个没动 |
+| **DSH** | 借鉴 DeepSeek Harness 的布局：左侧 268px 会话栏（最近课堂 + 启动按钮 + 剩余额度），顶栏 52px 发丝线分隔，内容区圆角卡片，底部浮起的胶囊输入区 |
+
+DSH 样式只改 `document.documentElement.dataset.ui`，所有功能代码两套布局共用，不存在「切了样式功能就坏」的分支。
+
+**来源与致谢**：DSH 样式在**布局结构与视觉规范**上借鉴 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（MIT License），包括栅格比例、52px 顶栏、R4/8/12/16/20/28 的圆角阶梯、0.5px 发丝线边框与浮起面板的层级规范。CSS 由本项目按上述规范自行实现，**未复制其源代码**；配色仍走 ClassNote 自己的主题变量，所以四套主题在两种样式下都成立。页面上也标注了来源（可在设置里关掉这条标注）。
 
 ---
 
@@ -211,6 +332,8 @@ data/
   captures/<id>/*.jpg       # 逐页截图
   reports/<id>.html|.pdf    # 课堂报告
   logs/app-YYYYMMDD.log     # 运行日志
+  plugins/skills/<id>.json  # 插件（v2 声明式清单，自动从 v1 迁移）
+  cache/dsh-plugins.json    # DSH 插件索引的离线缓存（24h TTL）
   webprofile/               # 网页版 AI 的浏览器登录态
   pdfprofile/               # 打印 PDF 用的独立浏览器配置
   runtime.json              # 端口与进程信息，供外部脚本对接
@@ -261,7 +384,9 @@ powershell -ExecutionPolicy Bypass -File build.ps1
    - 每批录音默认最长 10 秒。到达上限时不会硬切，而是回溯到最近一次句间停顿，把最后一句并入下一批，当前批次立即送转写；持续连读、完全没有停顿时才退回硬切。
    - 中文识别对同音字（如「荷塘月色」→「和堂乐色」）仍有误差，属本地小模型的正常水平；要更高精度可换 medium 模型或用云端接口。
 6. **DeepSeek 网页版在某些网络下被限流。** 本机 curl 请求 chat.deepseek.com 会返回 429，但真实浏览器可以正常打开登录页；接入流程与千问一致（设置 → 模型 → 网页版 → 登录）。API 模式的 DeepSeek 预设不受影响。
-7. **只在 Windows 上测试。** 代码使用了 Win32 API，macOS / Linux 无法编译。
+7. **只在 Windows 上测试。** 程序本身使用了 Win32 API，macOS / Linux 无法编译运行（`internal/plugin`、`internal/agent`、`internal/llm`、`internal/update` 这些纯逻辑包可以在 Linux 上跑单测）。
+8. **DSH 渠道的插件需要 DSH 才能跑。** ClassNote 只负责浏览索引、登记与复制安装命令；那些插件是 npm 包、依赖 DSH 运行时，本项目不会加载它们（这也是刻意的：老师电脑上不该随便跑第三方包）。
+9. **DSH 索引是快照。** 内置的那份是打版时的状态，之后新上架的插件要等后台刷新（24 小时一次）才会出现；断网时一直用快照。
 
 ---
 
@@ -284,6 +409,42 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 ---
 
+## 更新日志
+
+### v1.2.7（当前）
+
+**新增**
+
+- **插件模型 v2**：插件从「一段提示词」升级为带身份、类型、能力面、最小权限、界面槽位、事件订阅的声明式清单。v1 文件自动迁移，不用手改。
+- **插件市场双渠道**：「ClassNote」装本地插件即装即用；「DSH」可浏览 DeepSeek Harness 的 4104 个插件（内置快照，断网可用），复制安装命令或登记到本机。
+- **课堂 Agent 重做**：真实的 turn/step 工具循环 + 8 个内置工具 + 权限闸门 + 一次性审批 + 重复调用检测 + 步数上限；模型列表自带网页版 Qwen / DeepSeek，免 API Key。
+- **界面样式切换器**：经典 / DSH 两种布局一键切换，功能不分叉；DSH 样式的来源在界面与本文档均有标注。
+- **插件界面槽位**：插件可以往状态条、仪表盘、设置页、Agent 页四个固定槽位投放卡片。
+
+**修复**
+
+- 市场每次搜索都同步请求 GitHub：断网时每敲一个字卡十几秒 → 改为缓存 + 后台刷新，接口永不等待网络。
+- 装了插件不重启不生效 → 插件变更后立刻把提示词同步给分析引擎。
+- Agent 审批凭证用时间戳拼接，本机任意网页都能猜出来并伪造批准 → 改用 `crypto/rand`。
+- 模型可以自己编一个 `sessionId` 去读别的班的课堂记录 → 会话作用域改由宿主注入，并加测试锁死。
+- 市场索引地址可通过 query 指定，等于让本机代打内网 → 只允许 https，且拒绝回环 / 私网 / 链路本地地址。
+- 关掉悬浮球后被配置归一化强行打开；全屏放映时悬浮球压住课件；上课期间弹「有新版本」气泡 → 三处分别修掉。
+- 插件列表里的启用开关用了 `<span>`，而样式只认 `<i>`，导致开关整块不可见 → 修正。
+- 会话 ID 只挡了斜杠，`..` 与盘符冒号仍可拼进路径 → 收紧为白名单字符。
+- `internal/app` 被服务端与更新检查引用，把整条依赖链锁死在 Windows 上 → 抽出 `internal/appinfo`，`internal/update` 现在能在 Linux/CI 上编译与测试。
+
+**自检**
+
+- 单测 20 个用例（插件 10 + Agent 10）在 Linux 上全绿；`GOOS=windows go build ./...` 与 `go vet ./...` 通过。
+- 新增 `internal/server/smoke_test.go`：在临时目录起一套完整服务端，把首页、静态资源、bootstrap、status、会话、主题、插件 v2 清单、双渠道市场、槽位、Agent 模型目录与权限边界、样式切换全部真跑一遍。**在 Windows 上执行 `go test ./internal/server/` 即可复跑。**
+- 新增 `cmd/verify` 的四项运行时检查：插件清单版本、Agent 工具与模型、市场双渠道、样式切换写读回。
+
+### v1.2.6.1 及以前
+
+见 [Releases](https://github.com/tangyuan9325/ClassNote/releases)。
+
+---
+
 ## 开源许可
 
 本项目以 **MIT License** 发布，详见 [LICENSE](LICENSE)。
@@ -295,6 +456,14 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 | [go-rod/rod](https://github.com/go-rod/rod) | 浏览器自动化（网页版 AI、PDF 打印） | MIT |
 | [go-ole/go-ole](https://github.com/go-ole/go-ole) | PowerPoint / WPS 的 COM 调用 | MIT |
 | [golang.org/x/sys](https://pkg.go.dev/golang.org/x/sys) | Win32 API 绑定 | BSD-3-Clause |
+| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | **仅借鉴设计**：界面布局与视觉规范、插件模型与市场索引格式、Agent 的 turn/step 与工具审批流程。未包含其源代码 | MIT |
+| [dsh-plugin-catalog](https://www.npmjs.com/package/dsh-plugin-catalog) | DSH 插件索引快照（`internal/plugin/dsh-plugins.json.gz`，4104 条） | MIT |
+
+关于 DSH 的借鉴范围，说明白一点，免得误会：
+
+- **参考了设计，没有搬代码。** 界面 CSS 是按 DSH 的度量与层级规范重写的；插件清单结构、市场索引格式是按它的公开契约对齐的，方便以后两边互通。
+- **没有引入 DSH 运行时。** ClassNote 不是 DSH 的分支，也不加载 npm 包；DSH 渠道的插件在 ClassNote 里只是「引用 + 安装命令」。
+- 如果 DSH 的维护者认为某处标注不够清楚，开个 issue 即可，会立刻调整。
 
 ClassNote 与 ClassIsland、InkCanvasForClass、WPS、Microsoft Office 均无隶属关系，仅在本地通过公开接口与之协作。
 

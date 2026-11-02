@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"classnote/internal/app"
+	"classnote/internal/appinfo"
 	"classnote/internal/asr"
 	"classnote/internal/capture"
 	"classnote/internal/config"
@@ -34,7 +35,7 @@ import (
 var webAssets embed.FS
 
 var (
-	version   = "1.2.6.1"
+	version   = "1.2.7"
 	buildTime = "dev"
 )
 
@@ -50,8 +51,8 @@ func main() {
 	reset := flag.Bool("reset", false, "重置配置（保留课堂记录）")
 	flag.Parse()
 
-	app.Version = version
-	app.BuildTime = buildTime
+	appinfo.Version = version
+	appinfo.BuildTime = buildTime
 
 	paths := paths.Resolve()
 	if err := paths.Ensure(); err != nil {
@@ -338,6 +339,9 @@ func main() {
 					continue
 				}
 				if ball != nil {
+					// 老师全屏放课件时，置顶的小球会压住板书/课件角，先让路。
+					presenting := engine.Detector().Status().Presenting
+					ball.SetVisible(!presenting)
 					ball.SetStatus(app.FloatBallStatus{Running: s.Running, Subject: s.Subject, Elapsed: s.ElapsedSec, Level: s.Level})
 				}
 				if s.Running != wasRunning {
@@ -362,7 +366,8 @@ func main() {
 			info := update.Check(cfg.GitHub.Repo, cfg.GitHub.Token)
 			if info.HasUpdate {
 				logx.Infof("main", "发现新版本 %s（当前 %s）", info.Latest, info.Current)
-				if tray != nil {
+				// 正在上课就别弹气泡：一条「有新版本」的提示不该出现在投影上。
+				if tray != nil && !engine.Status().Running {
 					tray.Notify("有新版本", fmt.Sprintf("ClassNote %s 可用（当前 %s），到 GitHub 下载", info.Latest, info.Current))
 				}
 			} else if info.Error != "" {

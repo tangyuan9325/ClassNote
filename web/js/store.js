@@ -10,6 +10,10 @@ import { openSettings } from './settings.js';
 let S = null;
 let plTab = 'market';
 let plFilter = '';
+let plChannel = 'classnote';
+let plCategory = '';
+let plChannels = [];
+let plCategoryList = [];
 let thTab = 'all';
 let thFilter = '';
 let marketThemes = [];
@@ -22,6 +26,11 @@ export function initStores(state) {
 }
 
 /* ================= 插件商城 ================= */
+
+const CHANNEL_NOTE = {
+  classnote: '提示词型插件，装完即用',
+  dsh: 'DeepSeek Harness 生态插件索引，需 DSH 运行时',
+};
 
 function bindPlugins() {
   if (bindPlugins.done) return;
@@ -38,49 +47,119 @@ function bindPlugins() {
     renderPlugins();
   });
   $('#pl-refresh')?.addEventListener('click', () => renderPlugins(true));
+  $('#pl-channels')?.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-channel]');
+    if (!b) return;
+    plChannel = b.dataset.channel;
+    plCategory = '';
+    renderPlugins();
+  });
+  $('#pl-category')?.addEventListener('change', (e) => {
+    plCategory = e.target.value;
+    renderPlugins();
+  });
 }
 
 export async function renderPlugins(force = false) {
   const box = $('#pl-list');
   if (!box) return;
   box.innerHTML = '<div class="side-empty">加载中…</div>';
-  let market = [];
+  let data = { items: [], channels: [], categoryList: [], total: 0 };
   let local = [];
+  let broken = [];
   try {
+    const qs = new URLSearchParams({ channel: plChannel, q: plFilter.trim(), category: plCategory });
     const [mk, lc] = await Promise.all([
-      api.get('/api/plugins/market').catch((e) => ({ ok: false, error: e.message, skills: [] })),
+      api.get('/api/plugins/market?' + qs.toString()).catch((e) => ({ ok: false, error: e.message, items: [] })),
       api.get('/api/plugins'),
     ]);
-    market = mk.skills || [];
+    data = mk;
     local = lc.skills || [];
+    broken = lc.broken || [];
     if (force && !mk.ok) toast('市场清单拉取失败，已显示本地内容', 'err');
+    if (mk.channels?.length) plChannels = mk.channels;
+    if (mk.categoryList?.length) plCategoryList = mk.categoryList;
   } catch (e) {
     box.innerHTML = `<div class="store-empty">${esc(e.message)}</div>`;
     return;
   }
   updateCount(local.length);
-  const installed = new Set(local.map((s) => s.id));
-  const f = plFilter.trim().toLowerCase();
-  const match = (s) => !f || [s.name, s.description, s.author, s.id].join(' ').toLowerCase().includes(f);
+  renderChannels(data.total);
+  renderSubbar(data);
+  renderBroken(broken);
 
+  const installed = new Set(local.map((s) => s.id));
   if (plTab === 'installed') {
-    const list = local.filter(match);
     box.innerHTML = '';
-    if (!list.length) {
-      box.innerHTML = `<div class="store-empty">${f ? '没有匹配的插件' : '还没有安装插件，去「市场」看看'}</div>`;
+    if (!local.length) {
+      box.innerHTML = '<div class="store-empty">还没有安装插件，去「发现」看看</div>';
       return;
     }
-    for (const s of list) box.append(installedRow(s));
+    for (const s of local) box.append(installedRow(s));
     return;
   }
 
-  const list = market.filter(match);
+  const list = data.items || [];
   box.innerHTML = '';
   if (!list.length) {
-    box.innerHTML = `<div class="store-empty">${f ? '没有匹配的插件' : '市场里暂时没有插件'}</div>`;
+    box.innerHTML = `<div class="store-empty">${plFilter ? '没有匹配的插件' : '这个渠道暂时没有插件'}</div>`;
     return;
   }
-  for (const s of list) box.append(marketRow(s, installed.has(s.id)));
+  for (const it of list) box.append(marketRow(it, installed.has(it.id)));
+  if (data.total > list.length) {
+    box.append(el('div', { class: 'store-empty', text: `共 ${data.total} 个条目，已显示前 ${list.length} 个，用搜索或分类缩小范围` }));
+  }
+}
+
+function renderChannels(total) {
+  const box = $('#pl-channels');
+  if (!box) return;
+  const list = plChannels.length ? plChannels : [
+    { id: 'classnote', name: 'ClassNote', note: CHANNEL_NOTE.classnote },
+    { id: 'dsh', name: 'DeepSeek Harness', note: CHANNEL_NOTE.dsh },
+  ];
+  box.innerHTML = '';
+  for (const c of list) {
+    const b = el('button', { class: 'market-channel' + (c.id === plChannel ? ' active' : ''), dataset: { channel: c.id } });
+    b.innerHTML = `<b>${esc(c.name)}</b><span>${c.id === plChannel ? (total ?? c.count ?? 0) + ' 个条目' : (c.count || 0) + ' 个插件'}</span>`;
+    box.append(b);
+  }
+  const hint = el('div', { class: 'hint', style: 'align-self:center;max-width:420px' });
+  const cur = list.find((c) => c.id === plChannel);
+  hint.textContent = cur?.note || CHANNEL_NOTE[plChannel] || '';
+  box.append(hint);
+}
+
+function renderSubbar(data) {
+  const bar = $('#pl-subbar');
+  const sel = $('#pl-category');
+  const src = $('#pl-source');
+  if (!bar) return;
+  const isDSH = plChannel === 'dsh';
+  bar.hidden = !isDSH;
+  if (isDSH && sel) {
+    sel.innerHTML = '<option value="">全部分类</option>';
+    for (const c of plCategoryList) {
+      const o = el('option', { value: c.id, text: `${c.name}（${c.count}）` });
+      if (c.id === plCategory) o.selected = true;
+      sel.append(o);
+    }
+  }
+  if (src) {
+    src.textContent = isDSH
+      ? `索引：${data.source || 'dsh-plugin-catalog'}${data.stale ? ' · 离线快照' : ''}`
+      : '';
+  }
+}
+
+function renderBroken(broken) {
+  const old = document.querySelector('.broken-plugins');
+  old?.remove();
+  if (!broken?.length) return;
+  const box = el('div', { class: 'broken-plugins store-empty' });
+  box.innerHTML = `<b>有 ${broken.length} 个插件文件读不进来：</b>` +
+    broken.slice(0, 5).map((b) => `<div>${esc(b.file)} — ${esc(b.reason)}</div>`).join('');
+  $('#pl-list')?.before(box);
 }
 
 function updateCount(n) {
@@ -89,59 +168,90 @@ function updateCount(n) {
 }
 
 function iconText(name) {
-  return (name || '?').trim().slice(0, 1);
+  return (name || '?').trim().slice(0, 1).toUpperCase();
+}
+
+const KIND_LABEL = { skill: '提示词', tool: '工具', ui: '界面', external: 'DSH 引用' };
+
+function capBadges(p) {
+  const caps = p.capabilities || [];
+  const perms = p.permissions || [];
+  const out = [];
+  for (const c of caps) out.push(`<span class="cap on">${esc(c)}</span>`);
+  for (const perm of perms) out.push(`<span class="cap">${esc(perm)}</span>`);
+  return out.length ? `<div class="cap-row">${out.join('')}</div>` : '';
 }
 
 function marketRow(s, has) {
+  const ext = s.kind === 'external';
   const row = el('div', { class: 'store-row' });
   row.innerHTML = `
-    <div class="store-icon">${esc(iconText(s.name))}</div>
+    <div class="store-icon${ext ? ' alt' : ''}">${esc(iconText(s.name))}</div>
     <div class="store-main">
-      <b>${esc(s.name)} ${s.builtIn ? '<span class="tag">内置</span>' : ''}</b>
+      <b>${esc(s.name)} ${ext ? '<span class="tag">DSH</span>' : ''} ${s.version ? `<span class="tag">v${esc(s.version)}</span>` : ''}</b>
       <p>${esc(s.description || '没有描述')}</p>
+      ${ext ? `<div class="desc" style="opacity:.7;font-size:11.5px">${esc(s.module || s.category || '')} · ${esc(s.url || '')}</div>` : capBadges(s)}
     </div>
     <div class="store-meta">
-      <span>↓ ${fmtNum(s.downloads)}</span>
-      <span class="star">★ ${fmtNum(s.stars)}</span>
+      ${s.downloads ? `<span>↓ ${fmtNum(s.downloads)}</span>` : ''}
+      ${s.stars ? `<span class="star">★ ${fmtNum(s.stars)}</span>` : ''}
     </div>
-    <div class="store-actions">
-      <button class="btn small ${has ? 'ghost' : 'primary'}" ${has ? 'disabled' : ''}>${has ? '已安装' : '安装'}</button>
-    </div>`;
-  const btn = row.querySelector('button');
-  if (!has) {
-    btn.addEventListener('click', async () => {
-      btn.disabled = true;
-      btn.textContent = '安装中…';
+    <div class="store-actions"></div>`;
+  const actions = row.querySelector('.store-actions');
+  if (ext) {
+    const copy = el('button', { class: 'btn small ghost', text: '复制安装命令' });
+    copy.addEventListener('click', async () => {
+      const cmd = `dsh plugin --profile web add ${s.package || s.name}`;
       try {
-        await api.post('/api/plugins/install', { item: s });
-        toast('已安装 ' + s.name, 'ok');
-        renderPlugins();
-      } catch (e) {
-        toast(e.message, 'err');
-        btn.disabled = false;
-        btn.textContent = '安装';
-      }
+        await navigator.clipboard.writeText(cmd);
+        toast('已复制：' + cmd, 'ok');
+      } catch (e) { window.prompt('复制这条命令到 DSH 里安装：', cmd); }
     });
+    const reg = el('button', { class: 'btn small ' + (has ? 'ghost' : 'primary'), text: has ? '已登记' : '登记到本机' });
+    if (has) reg.disabled = true;
+    else reg.addEventListener('click', () => install(s, reg));
+    actions.append(copy, reg);
+  } else {
+    const b = el('button', { class: 'btn small ' + (has ? 'ghost' : 'primary'), text: has ? '已安装' : '安装' });
+    if (has) b.disabled = true;
+    else b.addEventListener('click', () => install(s, b));
+    actions.append(b);
   }
   return row;
 }
 
+async function install(s, btn) {
+  btn.disabled = true;
+  btn.textContent = '处理中…';
+  try {
+    const d = await api.post('/api/plugins/install', { item: s, channel: plChannel });
+    toast(s.kind === 'external' ? '已登记 ' + s.name + '，安装命令：' + (d.command || '') : '已安装 ' + s.name, 'ok');
+    renderPlugins();
+  } catch (e) {
+    toast(e.message, 'err');
+    btn.disabled = false;
+    btn.textContent = s.kind === 'external' ? '登记到本机' : '安装';
+  }
+}
+
 function installedRow(s) {
   const row = el('div', { class: 'store-row' });
+  const kind = KIND_LABEL[s.kind] || s.kind || '提示词';
   row.innerHTML = `
     <div class="store-icon alt">${esc(iconText(s.name))}</div>
     <div class="store-main">
-      <b>${esc(s.name)} ${s.builtIn ? '<span class="tag">内置</span>' : ''}</b>
+      <b>${esc(s.name)} <span class="tag">${esc(kind)}</span> ${s.version ? `<span class="tag">v${esc(s.version)}</span>` : ''} ${s.builtIn ? '<span class="tag">内置</span>' : ''}</b>
       <p>${esc(s.description || '没有描述')}</p>
+      ${s.kind === 'external'
+        ? `<div class="desc" style="opacity:.7;font-size:11.5px">${esc(s.source || s.homepage || '')} · 需要 DSH 才能运行</div>`
+        : capBadges(s)}
     </div>
     <div class="store-actions">
-      <label class="switch" title="${s.enabled ? '已启用' : '已停用'}">
-        <input type="checkbox" ${s.enabled ? 'checked' : ''}><i></i>
-      </label>
-      <button class="btn small ghost" data-act="edit">编辑</button>
+      ${s.kind === 'external' ? '' : `<label class="switch" title="${s.enabled ? '已启用' : '已停用'}"><input type="checkbox" ${s.enabled ? 'checked' : ''}><i></i></label>`}
+      ${s.kind === 'skill' ? '<button class="btn small ghost" data-act="edit">编辑</button>' : ''}
       <button class="btn small danger" data-act="del">删除</button>
     </div>`;
-  row.querySelector('input').addEventListener('change', async (e) => {
+  row.querySelector('input')?.addEventListener('change', async (e) => {
     try {
       await api.post('/api/plugins/toggle', { id: s.id, enabled: e.target.checked });
       s.enabled = e.target.checked;
@@ -151,15 +261,15 @@ function installedRow(s) {
       toast(err.message, 'err');
     }
   });
-  row.querySelector('[data-act="del"]').addEventListener('click', async () => {
-    if (!window.confirm(`删除技能包「${s.name}」？`)) return;
+  row.querySelector('[data-act="del"]')?.addEventListener('click', async () => {
+    if (!window.confirm(`删除插件「${s.name}」？`)) return;
     try {
       await api.post('/api/plugins/delete', { id: s.id });
       toast('已删除', 'ok');
       renderPlugins();
     } catch (err) { toast(err.message, 'err'); }
   });
-  row.querySelector('[data-act="edit"]').addEventListener('click', () => toggleEditor(row, s));
+  row.querySelector('[data-act="edit"]')?.addEventListener('click', () => toggleEditor(row, s));
   return row;
 }
 
@@ -171,7 +281,7 @@ function toggleEditor(row, s) {
   }
   const box = el('div', { class: 'skill-edit' });
   box.innerHTML = `
-    <div class="desc" style="margin:0 0 8px">编辑提示词，启用后会并入课堂助手的系统指令。</div>
+    <div class="desc" style="margin:0 0 8px">编辑提示词，启用后会并入课堂助手与 Agent 的系统指令。</div>
     <textarea></textarea>
     <div class="row" style="gap:8px;margin-top:8px">
       <button class="btn small primary" data-act="save">保存</button>
@@ -185,6 +295,7 @@ function toggleEditor(row, s) {
       await api.post('/api/plugins/save', { ...s, prompt: ta.value, enabled: s.enabled });
       toast('提示词已保存', 'ok');
       box.remove();
+      renderPlugins();
     } catch (err) { toast(err.message, 'err'); }
   });
   row.after(box);

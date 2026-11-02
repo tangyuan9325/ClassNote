@@ -15,9 +15,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"classnote/internal/app"
+	"classnote/internal/agent"
+	"classnote/internal/appinfo"
 	"classnote/internal/config"
 	"classnote/internal/integration"
 	"classnote/internal/lesson"
@@ -52,6 +54,13 @@ type Server struct {
 	ln        net.Listener // 当前监听器；切换局域网开关时需要重绑
 	lnHost    string
 	lnMu      sync.Mutex
+
+	// Agent 工具表与审批通道
+	toolMu    sync.Mutex
+	tools     *agent.Toolset
+	approveMu sync.Mutex
+	approvals map[string]chan bool
+	agentBusy atomic.Bool
 }
 
 // New 创建服务。
@@ -79,6 +88,16 @@ func New(paths paths.Paths, cfg *config.Store, st *store.Store, engine *lesson.E
 	s.routes()
 	engine.OnEvent(func(e lesson.Event) { s.broadcast(e) })
 	return s
+}
+
+// syncPluginPrompt 把启用插件的提示词同步给分析引擎。
+//
+// 之前只在启动时设一次：装完插件不重启就不生效，老师会以为插件坏了。
+func (s *Server) syncPluginPrompt() {
+	if s.plugins == nil || s.engine == nil {
+		return
+	}
+	s.engine.SetSkillPrompt(s.plugins.Prompt())
 }
 
 // Client 返回当前模型客户端（带缓存）。
@@ -163,8 +182,12 @@ func (s *Server) routes() {
 	m.HandleFunc("/api/plugins/delete", s.handlePluginDelete)
 	m.HandleFunc("/api/plugins/market", s.handlePluginMarket)
 	m.HandleFunc("/api/plugins/install", s.handlePluginInstall)
+	m.HandleFunc("/api/plugins/uninstall", s.handlePluginUninstall)
+	m.HandleFunc("/api/plugins/slots", s.handlePluginSlots)
 	m.HandleFunc("/api/agent/info", s.handleAgentInfo)
-	m.HandleFunc("/api/agent/chat", s.handleAgentChat)
+	m.HandleFunc("/api/agent/run", s.handleAgentRun)
+	m.HandleFunc("/api/agent/chat", s.handleAgentRun) // v1.2.6 的旧地址，行为保持不变（无工具时等价纯问答）
+	m.HandleFunc("/api/agent/approve", s.handleAgentApprove)
 	m.HandleFunc("/api/agent/permission", s.handleAgentPermission)
 	m.HandleFunc("/api/integrations/status", s.handleIntegrations)
 	m.HandleFunc("/api/integrations/icc/inject", s.handleICCInject)
@@ -504,7 +527,7 @@ func (s *Server) URL() string { return fmt.Sprintf("http://127.0.0.1:%d", s.port
 func (s *Server) WriteRuntime() {
 	info := map[string]any{
 		"port": s.port, "url": s.URL(), "pid": os.Getpid(),
-		"startedAt": s.started, "version": app.Version,
+		"startedAt": s.started, "version": appinfo.Version,
 	}
 	raw, _ := json.MarshalIndent(info, "", "  ")
 	_ = os.WriteFile(s.paths.Runtime, raw, 0o644)
