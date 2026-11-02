@@ -58,6 +58,10 @@ const reportHTML = `<!DOCTYPE html>
   .summary{font-size:14px;font-weight:600;margin:0 0 8px}
   .notes{font-size:13px;color:#3a3630}
   .notes h3{font-size:13.5px;margin:12px 0 5px}
+  .notes h4{font-size:13px;margin:10px 0 4px}
+  .notes p{margin:6px 0}
+  .notes code{font-family:Consolas,"Courier New",monospace;font-size:12.2px;background:#f2ede3;padding:1px 5px;border-radius:4px}
+  .empty{margin:0;color:#8d8579;font-size:12.4px}
   .notes ul{padding-left:18px;margin:6px 0}
   .points{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
   .point{background:var(--accent-soft);color:#8a4227;border-radius:6px;padding:2px 9px;font-size:11.5px}
@@ -128,12 +132,12 @@ const reportHTML = `<!DOCTYPE html>
     </div>
     {{if .Image}}<img class="shot" src="{{.Image}}" alt="第 {{.Index}} 页">{{end}}
     {{if .Summary}}<p class="summary">{{.Summary}}</p>{{end}}
-    {{if .Notes}}<div class="notes">{{nl2br .Notes}}</div>{{end}}
+    {{if .Notes}}<div class="notes">{{notes .Notes}}</div>{{else}}{{if not .Summary}}<p class="empty">本页没有捕获到画面文字与语音，未生成笔记。</p>{{end}}{{end}}
     {{if .KeyPoints}}
     <div class="points">{{range .KeyPoints}}<span class="point">{{.}}</span>{{end}}</div>
     {{end}}
     {{if .Tips}}<div class="tips">提示：{{range $i, $t := .Tips}}{{if $i}} · {{end}}{{$t}}{{end}}</div>{{end}}
-    {{if .Evidence}}<div class="copy-flag">照搬评分 <b>{{.CopyScore}}</b> · {{.Evidence}}</div>{{end}}
+    {{if .Evidence}}<div class="copy-flag">照搬评分 <b>{{.ScoreLabel}}</b> · {{.Evidence}}</div>{{end}}
   </div>
   {{end}}
 

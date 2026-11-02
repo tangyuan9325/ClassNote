@@ -35,6 +35,11 @@ type SlideExporter struct {
 	fails         int
 	lastLog       time.Time
 	appName       string
+	// stuck 记录被 Office 模态对话框卡住、再也不会退出的工作线程数。
+	// 每个这样的线程还占着一个 OS 线程和一个 COM 公寓，永远不会回收，
+	// 所以超过上限就彻底放弃 COM 通道，改用窗口类名与像素哈希检测。
+	stuck int
+	dead  bool
 }
 
 type comReq struct {
@@ -78,8 +83,11 @@ func (e *SlideExporter) loop(ch chan comReq) {
 				continue
 			}
 			disp, err := unk.QueryInterface(ole.IID_IDispatch)
+			// 无论成功与否都要释放 GetActiveObject 拿到的这份引用。
+			// 1.2.5 只在失败分支 Release，成功路径每附着一次漏一个 COM 引用，
+			// 反复重附着（PPT 被切走再切回来）会一直涨。
+			unk.Release()
 			if err != nil {
-				unk.Release()
 				continue
 			}
 			app = disp
@@ -117,6 +125,10 @@ func (e *SlideExporter) loop(ch chan comReq) {
 // call 把请求投递给 COM 工作线程；超时会放弃卡死的线程并进入短暂冷却，随后自愈。
 func (e *SlideExporter) call(fn func(app *ole.IDispatch, progID string) (any, error), timeout time.Duration) (any, error) {
 	e.mu.Lock()
+	if e.dead {
+		e.mu.Unlock()
+		return nil, fmt.Errorf("COM 通道已停用")
+	}
 	if wait := time.Until(e.disabledUntil); wait > 0 {
 		e.mu.Unlock()
 		return nil, fmt.Errorf("COM 通道冷却中，%s 后重试", wait.Round(time.Second))
@@ -132,6 +144,7 @@ func (e *SlideExporter) call(fn func(app *ole.IDispatch, progID string) (any, er
 	select {
 	case ch <- req:
 	case <-time.After(2 * time.Second):
+		e.markStuck("COM 请求队列已满")
 		return nil, fmt.Errorf("COM 通道繁忙")
 	}
 	select {
@@ -148,6 +161,12 @@ func (e *SlideExporter) call(fn func(app *ole.IDispatch, progID string) (any, er
 		if e.ch == ch {
 			e.ch = nil
 		}
+		// 这个工作线程还被 Office 的模态对话框卡着，退不出去，
+		// 线程和 COM 公寓都收不回来，只能记账并限制总数。
+		e.stuck++
+		if e.stuck >= 3 && !e.dead {
+			e.dead = true
+		}
 		e.fails++
 		if e.fails >= 2 {
 			e.disabledUntil = time.Now().Add(8 * time.Second)
@@ -157,7 +176,12 @@ func (e *SlideExporter) call(fn func(app *ole.IDispatch, progID string) (any, er
 		if logIt {
 			e.lastLog = time.Now()
 		}
+		dead := e.dead
+		stuck := e.stuck
 		e.mu.Unlock()
+		if dead {
+			logx.Warnf("capture", "COM 通道已卡死 %d 次，永久切换到窗口类名 / 像素哈希检测", stuck)
+		}
 		if logIt {
 			logx.Warnf("capture", "COM 调用超时，已切换备用检测通道")
 		}
@@ -354,4 +378,22 @@ func (e *SlideExporter) ExportCurrent(dir string, width, height int) (string, in
 		return "", idx, fmt.Errorf("导出文件不存在")
 	}
 	return out, idx, nil
+}
+
+// markStuck 记录一次"通道被占死"，累计到上限就永久停用 COM。
+func (e *SlideExporter) markStuck(why string) {
+	e.mu.Lock()
+	e.stuck++
+	if e.stuck >= 3 && !e.dead {
+		e.dead = true
+	}
+	stuck, dead := e.stuck, e.dead
+	if e.ch != nil {
+		e.ch = nil
+	}
+	e.mu.Unlock()
+	logx.Debugf("capture", "%s（累计 %d 次）", why, stuck)
+	if dead {
+		logx.Warnf("capture", "COM 通道已停用，改用窗口类名 / 像素哈希检测")
+	}
 }

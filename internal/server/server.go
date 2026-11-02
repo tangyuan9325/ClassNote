@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -65,6 +66,10 @@ func New(paths paths.Paths, cfg *config.Store, st *store.Store, engine *lesson.E
 	plugins, err := plugin.Open(filepath.Join(paths.Root, "data", "plugins", "skills"))
 	if err != nil {
 		logx.Warnf("server", "技能包目录不可用: %v", err)
+	}
+	if plugins == nil {
+		// 不留给调用方 nil：插件相关接口一律走空仓库，避免解引用直接 500。
+		plugins = plugin.Empty()
 	}
 	s.plugins = plugins
 	if plugins != nil {
@@ -340,7 +345,7 @@ func (s *Server) listenOn(host string, preferred int) (int, error) {
 		s.ln = ln
 		go func(ln net.Listener) {
 			srv := &http.Server{
-				Handler:           s.authMiddleware(s.mux),
+				Handler:           s.csrfGuard(s.authMiddleware(s.mux)),
 				ReadHeaderTimeout: 10 * time.Second,
 			}
 			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -394,6 +399,76 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// csrfGuard 拦截跨站写请求。
+//
+// authMiddleware 对回环地址是直接放行的（本机用文件管理器打开就能用，
+// 不要求先输密钥）。代价是：本机浏览器里任意一个恶意页面都能向
+// 127.0.0.1:41735 发一个表单 POST，把 /api/shutdown、/api/lesson/start、
+// /api/config 打成"用户自己的操作"——服务端看到的是来自 127.0.0.1 的请求。
+//
+// 浏览器发跨站写请求一定会带 Origin 或 Sec-Fetch-Site，而 curl、自检工具、
+// 托盘菜单这些本机客户端不会带，正好用这一点把两者分开。
+func (s *Server) csrfGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+		if strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")), "cross-site") {
+			writeErr(w, http.StatusForbidden, fmt.Errorf("拒绝跨站请求"))
+			return
+		}
+		// 没带 Origin 的本机客户端（curl / 自检 / 托盘）放行；
+		// 带了的必须是本服务自己的源。
+		if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" && !s.sameOrigin(origin) {
+			writeErr(w, http.StatusForbidden, fmt.Errorf("拒绝跨站请求"))
+			return
+		}
+		// 这两类是无须预检的简单请求，本程序没有任何接口用它们提交数据，
+		// 直接挡掉可以再省一层。
+		ct := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+		if i := strings.IndexByte(ct, ';'); i >= 0 {
+			ct = strings.TrimSpace(ct[:i])
+		}
+		if ct == "text/plain" || ct == "application/x-www-form-urlencoded" {
+			writeErr(w, http.StatusUnsupportedMediaType, fmt.Errorf("请使用 application/json 提交"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// sameOrigin 判断 Origin 是否指向本服务自己。
+//
+// 端口对上就认为是自己：别的站点要伪造，就得先占住 41735 这个端口，
+// 而我们正监听着它。主机名再限定为回环或当前监听地址。
+func (s *Server) sameOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	port := u.Port()
+	if port == "" {
+		if u.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	if port != strconv.Itoa(s.port) {
+		return false
+	}
+	host := u.Hostname()
+	if host == "localhost" || isLoopback(host+":0") {
+		return true
+	}
+	s.lnMu.Lock()
+	listenHost := s.lnHost
+	s.lnMu.Unlock()
+	return host == listenHost || listenHost == "" || listenHost == "0.0.0.0"
 }
 
 func isLoopback(remoteAddr string) bool {

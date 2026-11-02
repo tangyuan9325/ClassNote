@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,6 +116,10 @@ func Download(assetURL, destDir, name, token string) (string, error) {
 	if assetURL == "" {
 		return "", fmt.Errorf("附件地址为空")
 	}
+	u, err := url.Parse(assetURL)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return "", fmt.Errorf("附件地址不合法")
+	}
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return "", err
 	}
@@ -123,7 +128,9 @@ func Download(assetURL, destDir, name, token string) (string, error) {
 		return "", err
 	}
 	req.Header.Set("User-Agent", "ClassNote")
-	if token != "" {
+	// Token 只发给 GitHub 自己的域：这个接口的 url 参数来自请求体，
+	// 无条件带 Authorization 等于把凭据交给任意主机。
+	if token != "" && trustedHost(u.Hostname()) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	// 大文件下载不设总超时
@@ -137,7 +144,12 @@ func Download(assetURL, destDir, name, token string) (string, error) {
 		return "", fmt.Errorf("下载失败：HTTP %d", resp.StatusCode)
 	}
 	if name == "" {
-		name = filepath.Base(strings.Split(assetURL, "?")[0])
+		name = filepath.Base(u.Path)
+	}
+	// 只取最后一段并去掉 ..，否则 name 传 "../../x.exe" 就能写到程序目录之外。
+	name = filepath.Base(filepath.Clean("/" + name))
+	if name == "" || name == "." || name == ".." || name == string(filepath.Separator) {
+		return "", fmt.Errorf("附件文件名不合法")
 	}
 	dst := filepath.Join(destDir, name)
 	f, err := os.Create(dst)
@@ -145,7 +157,8 @@ func Download(assetURL, destDir, name, token string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	// 限流：更新包最大 200MB，避免对端返回一个超大响应把磁盘写满。
+	if _, err := io.Copy(f, io.LimitReader(resp.Body, 200<<20)); err != nil {
 		return "", fmt.Errorf("写入失败: %w", err)
 	}
 	return dst, nil
@@ -166,6 +179,13 @@ func Apply(zipPath, root string) error {
 	entries, _ := os.ReadDir(staging)
 	if len(entries) == 1 && entries[0].IsDir() {
 		content = filepath.Join(staging, entries[0].Name())
+	}
+	// 校验包里确实有 ClassNote.exe，且是 Windows PE。
+	// 没有这一步，任何一个 zip 都会被 xcopy 覆盖进安装目录——
+	// 更新包来源只有 GitHub Releases，但这仍是最便宜的一道闸。
+	if err := verifyPayload(content); err != nil {
+		_ = os.RemoveAll(staging)
+		return err
 	}
 	exe, _ := os.Executable()
 	script := fmt.Sprintf(`@echo off
@@ -198,6 +218,8 @@ func unzip(src, dst string) error {
 		return err
 	}
 	defer r.Close()
+	var total int64
+	var lastErr error
 	for _, f := range r.File {
 		target := filepath.Join(dst, f.Name)
 		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(dst)+string(os.PathSeparator)) {
@@ -217,11 +239,22 @@ func unzip(src, dst string) error {
 			rc.Close()
 			continue
 		}
-		_, _ = io.Copy(out, rc)
+		// 单文件限 200MB，累计限 600MB：解压炸弹会在这一步停下。
+		written, cerr := io.Copy(out, io.LimitReader(rc, 200<<20))
 		out.Close()
 		rc.Close()
+		total += written
+		if cerr != nil || total > 600<<20 {
+			_ = os.Remove(target)
+			if cerr != nil {
+				lastErr = cerr
+			} else {
+				lastErr = fmt.Errorf("更新包解压后超过 600MB，已中止")
+				break
+			}
+		}
 	}
-	return nil
+	return lastErr
 }
 
 // newer 判断 a 是否比 b 新（语义化版本 x.y.z）。
@@ -243,4 +276,28 @@ func splitVer(v string) [3]int {
 		out[i] = n
 	}
 	return out
+}
+
+// trustedHost 判断是否 GitHub 自有域，只有这些主机才允许收到 Token。
+func trustedHost(host string) bool {
+	h := strings.ToLower(host)
+	if h == "github.com" || h == "api.github.com" || h == "codeload.github.com" || h == "objects.githubusercontent.com" {
+		return true
+	}
+	return strings.HasSuffix(h, ".githubusercontent.com")
+}
+
+// verifyPayload 确认解压目录里有一个像样的 ClassNote.exe。
+func verifyPayload(dir string) error {
+	path := filepath.Join(dir, "ClassNote.exe")
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("更新包里没有 ClassNote.exe，已取消升级")
+	}
+	defer f.Close()
+	head := make([]byte, 2)
+	if _, err := io.ReadFull(f, head); err != nil || head[0] != 'M' || head[1] != 'Z' {
+		return fmt.Errorf("更新包里的 ClassNote.exe 不是有效的 Windows 程序，已取消升级")
+	}
+	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"classnote/internal/config"
+	"classnote/internal/logx"
 )
 
 // Snapshot 是一次幻灯片快照。
@@ -115,7 +116,8 @@ func (d *Detector) Probe() (*Snapshot, bool, bool) {
 			d.misses = 0
 			d.mu.Unlock()
 			if info.SlideIndex != lastIdx {
-				if path, idx, err2 := d.exporter.ExportCurrent(os.TempDir(), 1920, 1080); err2 == nil {
+				path, idx, err2 := d.exporter.ExportCurrent(os.TempDir(), 1920, 1080)
+				if err2 == nil {
 					img, derr := DecodeFile(path)
 					_ = os.Remove(path)
 					if derr == nil {
@@ -128,13 +130,21 @@ func (d *Detector) Probe() (*Snapshot, bool, bool) {
 						d.commit(snap)
 						return snap, true, true
 					}
+					err2 = derr
 				}
+				// 导出失败时绝不能静默复用旧快照：那样整堂课都会漏页，而状态页显示一切正常。
+				// 记下原因并继续往下走窗口截图这条路。
+				logx.Warnf("capture", "COM 导出第 %d 页失败: %v，降级为窗口截图", info.SlideIndex, err2)
+				d.mu.Lock()
+				d.lastErr = "COM 导出失败: " + err2.Error()
+				d.mu.Unlock()
+			} else {
+				// 页码确实没变，复用上次快照。
+				d.mu.Lock()
+				snap := d.lastSnap
+				d.mu.Unlock()
+				return snap, false, true
 			}
-			// 页码未变化，复用上次快照。
-			d.mu.Lock()
-			snap := d.lastSnap
-			d.mu.Unlock()
-			return snap, false, true
 		}
 	}
 
@@ -207,6 +217,10 @@ func (d *Detector) commit(snap *Snapshot) {
 
 // CaptureNow 立即抓取当前幻灯片，忽略翻页判断。
 func (d *Detector) CaptureNow() (*Snapshot, error) {
+	// 配置读取必须在锁内取快照：本方法由 HTTP 协程调用，与探测协程并发跑。
+	d.mu.Lock()
+	cfg := d.cfg
+	d.mu.Unlock()
 	info, err := d.exporter.Info()
 	if err == nil && info.Available {
 		path, idx, err2 := d.exporter.ExportCurrent(os.TempDir(), 1920, 1080)
@@ -238,7 +252,7 @@ func (d *Detector) CaptureNow() (*Snapshot, error) {
 		if err != nil {
 			return nil, err
 		}
-		img = Resize(img, d.cfg.MaxWidth)
+		img = Resize(img, cfg.MaxWidth)
 		snap := &Snapshot{Image: img, Hash: DHash(img), Source: "manual", At: time.Now(),
 			Width: img.Bounds().Dx(), Height: img.Bounds().Dy(), App: "屏幕"}
 		snap.PNG, _ = EncodePNG(img)
@@ -249,14 +263,14 @@ func (d *Detector) CaptureNow() (*Snapshot, error) {
 		return nil, err
 	}
 	cropped := false
-	if d.cfg.CropBlackBars {
+	if cfg.CropBlackBars {
 		if c := cropBlackBars(img); c != img {
 			img = c
 			cropped = true
 		}
 	}
 	if d.cfg.MaxWidth > 0 {
-		img = Resize(img, d.cfg.MaxWidth)
+		img = Resize(img, cfg.MaxWidth)
 	}
 	snap := &Snapshot{
 		Image: img, Hash: DHash(img), Source: "window", App: friendlyApp(win.Process),
@@ -291,22 +305,22 @@ func FindSlideShowWindow() (WindowInfo, bool) {
 			continue
 		}
 		class := strings.ToLower(w.Class)
-		title := w.Title
 		fullscreen := w.Fullscreen
-		match := class == "screenclass" ||
+		// 放映窗口的类名是 screenClass / wpp / wps / 含 slide、present。
+		// 1.2.5 在这里多写了一个 "if 标题含放映 { match = true }"，而进到这段代码
+		// 时 match 已经为 true，等于空操作——实际筛选只看类名，编辑态主窗口最大化
+		// 也会被当成放映。这里把类名判断写实，并用全屏作为附加条件。
+		classMatch := class == "screenclass" ||
 			strings.Contains(class, "slide") ||
-			(fullscreen && (class == "wpp" || class == "wps" || strings.Contains(class, "present")))
-		if !match {
-			continue
-		}
-		// 主窗口标题通常包含文件名；放映窗口标题含"放映"或"Slide Show"。
-		if strings.Contains(title, "放映") || strings.Contains(strings.ToLower(title), "slide show") {
-			match = true
-		}
-		if !match {
+			strings.Contains(class, "present") ||
+			class == "wpp" || class == "wps"
+		if !classMatch {
 			continue
 		}
 		area := w.Rect.Width() * w.Rect.Height()
+		if !fullscreen && area < 640*480 {
+			continue
+		}
 		if area > bestArea {
 			best, bestArea = w, area
 		}

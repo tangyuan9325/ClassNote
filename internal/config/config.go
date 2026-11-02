@@ -439,10 +439,18 @@ func (s *Store) Redacted() map[string]any {
 	}
 	c.Provider.APIKey = key
 	c.ASR.APIKey = asrKey
+	// GitHub Token 同样要脱敏：它会随 /api/bootstrap 下发到前端，
+	// 而局域网模式下任何持访问密钥的设备都能读到。
+	ghToken := c.GitHub.Token
+	if ghToken != "" {
+		ghToken = maskKey(ghToken)
+	}
+	c.GitHub.Token = ghToken
 	return map[string]any{
-		"config":    c,
-		"hasKey":    s.Get().Provider.APIKey != "",
-		"hasASRKey": s.Get().ASR.APIKey != "",
+		"config":     c,
+		"hasKey":     s.Get().Provider.APIKey != "",
+		"hasASRKey":  s.Get().ASR.APIKey != "",
+		"hasGHToken": s.Get().GitHub.Token != "",
 	}
 }
 

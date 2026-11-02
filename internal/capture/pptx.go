@@ -39,6 +39,46 @@ func ExtractDeck(path string) (*Deck, error) {
 	}
 	defer zr.Close()
 
+	files := orderedSlideFiles(&zr.Reader)
+	if len(files) == 0 {
+		return nil, fmt.Errorf("演示文稿中没有找到幻灯片")
+	}
+
+	deck := &Deck{Path: path, Title: strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))}
+	for _, f := range files {
+		text, err := readSlideXML(f)
+		if err != nil {
+			deck.Slides = append(deck.Slides, "")
+			continue
+		}
+		deck.Slides = append(deck.Slides, text)
+	}
+	return deck, nil
+}
+
+// orderedSlideFiles 按放映顺序返回幻灯片 XML。
+//
+// 页序必须以 ppt/presentation.xml 的 <p:sldIdLst> 为准，而不是 slideN.xml 的
+// 文件名序号：教师在 PowerPoint 里拖动过顺序之后，slide7.xml 可能对应第 2 页，
+// 按文件名排会把文字配到错误的页码上（报告里"文字与画面不符"多半是这个原因）。
+// presentation.xml 读不到时才退回文件名排序。
+func orderedSlideFiles(zr *zip.Reader) []*zip.File {
+	byName := make(map[string]*zip.File, len(zr.File))
+	for _, f := range zr.File {
+		byName[f.Name] = f
+	}
+	if order := slideOrderFromPresentation(zr); len(order) > 0 {
+		out := make([]*zip.File, 0, len(order))
+		for _, name := range order {
+			if f, ok := byName[name]; ok {
+				out = append(out, f)
+			}
+		}
+		if len(out) == len(order) {
+			return out
+		}
+	}
+	// 回退：文件名序号。
 	type slideFile struct {
 		num  int
 		file *zip.File
@@ -56,21 +96,74 @@ func ExtractDeck(path string) (*Deck, error) {
 		}
 		slides = append(slides, slideFile{num: n, file: f})
 	}
-	if len(slides) == 0 {
-		return nil, fmt.Errorf("演示文稿中没有找到幻灯片")
-	}
 	sort.Slice(slides, func(i, j int) bool { return slides[i].num < slides[j].num })
-
-	deck := &Deck{Path: path, Title: strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))}
+	out := make([]*zip.File, 0, len(slides))
 	for _, s := range slides {
-		text, err := readSlideXML(s.file)
-		if err != nil {
-			deck.Slides = append(deck.Slides, "")
+		out = append(out, s.file)
+	}
+	return out
+}
+
+// slideOrderFromPresentation 解析 sldIdLst + rels，得到 "ppt/slides/slideN.xml" 的有序列表。
+func slideOrderFromPresentation(zr *zip.Reader) []string {
+	pres := readZipByName(zr, "ppt/presentation.xml", 16<<20)
+	rels := readZipByName(zr, "ppt/_rels/presentation.xml.rels", 8<<20)
+	if pres == nil || rels == nil {
+		return nil
+	}
+	var presDoc struct {
+		IDs []struct {
+			RID string `xml:"id,attr"`
+		} `xml:"sldIdLst>sldId"`
+	}
+	if err := xml.Unmarshal(pres, &presDoc); err != nil || len(presDoc.IDs) == 0 {
+		return nil
+	}
+	var relDoc struct {
+		Rels []struct {
+			ID     string `xml:"Id,attr"`
+			Target string `xml:"Target,attr"`
+		} `xml:"Relationship"`
+	}
+	if err := xml.Unmarshal(rels, &relDoc); err != nil {
+		return nil
+	}
+	targets := make(map[string]string, len(relDoc.Rels))
+	for _, r := range relDoc.Rels {
+		targets[r.ID] = r.Target
+	}
+	out := make([]string, 0, len(presDoc.IDs))
+	for _, id := range presDoc.IDs {
+		t, ok := targets[id.RID]
+		if !ok {
+			return nil
+		}
+		t = strings.TrimPrefix(t, "/")
+		if !strings.HasPrefix(t, "ppt/") {
+			t = "ppt/" + strings.TrimPrefix(t, "./")
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+func readZipByName(zr *zip.Reader, name string, limit int64) []byte {
+	for _, f := range zr.File {
+		if f.Name != name {
 			continue
 		}
-		deck.Slides = append(deck.Slides, text)
+		rc, err := f.Open()
+		if err != nil {
+			return nil
+		}
+		defer rc.Close()
+		raw, err := io.ReadAll(io.LimitReader(rc, limit))
+		if err != nil {
+			return nil
+		}
+		return raw
 	}
-	return deck, nil
+	return nil
 }
 
 func readSlideXML(f *zip.File) (string, error) {

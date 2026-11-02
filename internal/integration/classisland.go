@@ -433,14 +433,24 @@ func (p *ClassIslandProvider) lessonsFor(now time.Time) []Lesson {
 		}
 	}
 	// 挑选当天的启用课表。
+	// 按 id 排序遍历：map 的随机序会让同分候选每天选到不同的课表。
+	planIDs := make([]string, 0, len(pf.ClassPlans))
+	for id := range pf.ClassPlans {
+		planIDs = append(planIDs, id)
+	}
+	sort.Strings(planIDs)
 	var best *ciClassPlan
 	bestScore := -1
-	for id, cp := range pf.ClassPlans {
-		_ = id
+	for _, id := range planIDs {
+		cp := pf.ClassPlans[id]
 		if cp.IsOverlay || !cp.IsEnabled {
 			continue
 		}
 		if cp.TimeRule.WeekDay != weekday {
+			continue
+		}
+		// 单双周：1.2.5 解析了 WeekCountDiv 却从未使用，隔周上的课会被当成每周都上。
+		if !weekRuleMatches(cp.TimeRule.WeekCountDiv, cp.TimeRule.WeekCountDivTotal, now) {
 			continue
 		}
 		if pf.SelectedGrp != "" && cp.AssociatedGrp != "" && cp.AssociatedGrp != pf.SelectedGrp &&
@@ -562,4 +572,20 @@ func (p *ClassIslandProvider) Summary() string {
 	default:
 		return "非上课时间"
 	}
+}
+
+// weekRuleMatches 判断今天是否命中单双周/多周轮换规则。
+//
+// ClassIsland 的 TimeRule.WeekCountDiv：0 表示每周；1..Total 表示该规则只在
+// 第 1/2/... 周生效（Total 默认 2，即单双周）。这里没有学期起始日可用，
+// 用 ISO 周数近似——对单双周这种二元轮换足够准，多周轮换会有相位偏差。
+func weekRuleMatches(div, total int, now time.Time) bool {
+	if div <= 0 {
+		return true
+	}
+	if total <= 0 {
+		total = 2
+	}
+	_, week := now.ISOWeek()
+	return div%total == week%total
 }

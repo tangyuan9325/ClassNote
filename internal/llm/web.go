@@ -277,6 +277,9 @@ func (c *WebClient) Stream(ctx context.Context, msgs []Message, opt Options, onD
 	_ = el.Click(proto.InputMouseButtonLeft, 1)
 
 	prompt, images := flatten(msgs)
+	// flatten 会把截图落到 %TEMP%，1.2.5 从不回收：一堂 19 页的课就在
+	// 学生本机留下 19 张课堂画面，越积越多。这里用完即删。
+	defer cleanupTempImages(images)
 	if opt.FollowUp {
 		prompt = slimPrompt(prompt)
 	}
@@ -682,19 +685,46 @@ func countCJK(s string) int {
 
 // slimPrompt 同一条对话里的后续提问：去掉重复的背景与要求说明，
 // 只留本页要分析的内容（对话上下文里已经有前面的铺垫）。
-func slimPrompt(p string) string {
-	// 系统要求段落只保留一次（首条已经发过），这里整段去掉。
-	if i := strings.Index(p, "【任务】"); i > 0 {
-		p = p[i:]
+// cleanupTempImages 删除为上传而生成的临时截图。
+func cleanupTempImages(paths []string) {
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		_ = os.Remove(p)
 	}
-	// 裁掉重复的字段说明
+}
+
+// slimPrompt 只删掉历史回答，绝不删系统提示。
+//
+// 1.2.5 的实机故障（2026-11-02 地理课、物理课）：这里原本从「【任务】」处
+// 截断，把整段系统提示——角色、硬性约束、判定锚点、以及最关键的 JSON 输出
+// 格式——全部删掉，只留下「学科 / 页码 / 画面文字 / 语音转写」四段材料。
+//
+// 模型拿不到字段约定，就自己包了一层 {"content": "..."}：这是合法 JSON，
+// 但 board_text / notes / summary 全部缺席，解析不报错、字段全空，
+// 于是从第 2 页起报告里只剩一句「照搬评分 -1」。第 1 页之所以正常，
+// 正因为它是本堂课第一次请求，走的是完整提示词。
+//
+// 另外，Stream 每次都用 br.Page 开新标签页，页面里本来就没有上一轮的上下文，
+// 「系统提示只发一次」这个前提从一开始就不成立。
+func slimPrompt(p string) string {
 	lines := strings.Split(p, "\n")
 	out := make([]string, 0, len(lines))
+	skipHistory := false
 	for _, l := range lines {
 		t := strings.TrimSpace(l)
-		if strings.HasPrefix(t, "你是") || strings.HasPrefix(t, "【要求】") ||
-			strings.HasPrefix(t, "输出格式") || strings.HasPrefix(t, "【上一轮回答】") {
+		if strings.HasPrefix(t, "【上一轮回答】") {
+			skipHistory = true
 			continue
+		}
+		if skipHistory {
+			// 历史块到下一个小标题为止。
+			if strings.HasPrefix(t, "【") {
+				skipHistory = false
+			} else {
+				continue
+			}
 		}
 		out = append(out, l)
 	}

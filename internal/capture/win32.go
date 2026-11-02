@@ -167,33 +167,39 @@ func windowProcess(pid uint32) string {
 var enumMu sync.Mutex
 var enumResult []WindowInfo
 
+// enumCallback 只注册一次。
+//
+// 1.2.5 把 syscall.NewCallback 写在 ListWindows 里面，每次枚举都新建一个回调且
+// 永不释放。Go 运行时的回调槽上限是 2000 个，而无 COM 时探测器每 700ms 就要枚举
+// 一次窗口——大约 23 分钟后进程会因为槽位耗尽 panic。
+var enumCallback = syscall.NewCallback(func(hwnd uintptr, _ uintptr) uintptr {
+	visible, _, _ := procIsWindowVisible.Call(hwnd)
+	if visible == 0 {
+		return 1
+	}
+	r := windowRect(hwnd)
+	if r.Width() <= 0 || r.Height() <= 0 {
+		return 1
+	}
+	pid := windowPID(hwnd)
+	enumResult = append(enumResult, WindowInfo{
+		HWND:    hwnd,
+		Title:   windowText(hwnd),
+		Class:   windowClass(hwnd),
+		PID:     pid,
+		Process: windowProcess(pid),
+		Rect:    r,
+		Visible: true,
+	})
+	return 1
+})
+
 // ListWindows 枚举所有可见顶层窗口。
 func ListWindows() []WindowInfo {
 	enumMu.Lock()
 	defer enumMu.Unlock()
 	enumResult = enumResult[:0]
-	cb := syscall.NewCallback(func(hwnd uintptr, _ uintptr) uintptr {
-		visible, _, _ := procIsWindowVisible.Call(hwnd)
-		if visible == 0 {
-			return 1
-		}
-		r := windowRect(hwnd)
-		if r.Width() <= 0 || r.Height() <= 0 {
-			return 1
-		}
-		pid := windowPID(hwnd)
-		enumResult = append(enumResult, WindowInfo{
-			HWND:    hwnd,
-			Title:   windowText(hwnd),
-			Class:   windowClass(hwnd),
-			PID:     pid,
-			Process: windowProcess(pid),
-			Rect:    r,
-			Visible: true,
-		})
-		return 1
-	})
-	procEnumWindows.Call(cb, 0)
+	procEnumWindows.Call(enumCallback, 0)
 	out := make([]WindowInfo, len(enumResult))
 	copy(out, enumResult)
 	sw, sh := ScreenSize()

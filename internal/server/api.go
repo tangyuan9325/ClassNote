@@ -128,6 +128,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if maskedOrEmpty(incoming.ASR.APIKey) {
 		incoming.ASR.APIKey = cur.ASR.APIKey
 	}
+	if maskedOrEmpty(incoming.GitHub.Token) {
+		incoming.GitHub.Token = cur.GitHub.Token
+	}
 	if incoming.Onboarded == false {
 		incoming.Onboarded = cur.Onboarded
 	}
@@ -580,28 +583,10 @@ func (s *Server) handleNote(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
-	sess := s.engine.Session()
-	if body.SessionID != "" {
-		if loaded, err := s.store.Load(body.SessionID); err == nil {
-			sess = loaded
-		}
-	}
-	if sess == nil {
-		writeErr(w, 404, fmt.Errorf("会话不存在"))
-		return
-	}
-	for _, seg := range sess.Segments {
-		if seg.ID == body.SegmentID {
-			if body.Notes != "" {
-				seg.Notes = body.Notes
-			}
-			if body.Summary != "" {
-				seg.Summary = body.Summary
-			}
-		}
-	}
-	if err := s.store.Save(sess); err != nil {
-		writeErr(w, 500, err)
+	// 改笔记必须走引擎的写入口：原来的写法拿 Session() 裸指针在锁外改字段，
+	// 会和后台分析协程抢同一个 segment。
+	if err := s.engine.EditNote(body.SessionID, body.SegmentID, body.Notes, body.Summary); err != nil {
+		writeErr(w, 400, err)
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})

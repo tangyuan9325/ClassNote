@@ -341,13 +341,14 @@ func (e *Engine) Stop() error {
 		close(watchStop)
 	}
 	// 1) 停止录音，等待采集与检测协程退出。
+	// recordLoop 会在退出前自己 flush 残留音频（见该函数的 defer），
+	// 这里只需要等它把最后一批 job 送进 asrQ。
 	if rec != nil {
 		rec.Stop()
 	}
 	e.wgWork.Wait()
 
-	// 2) 残余音频送去转写并等待回填。
-	e.flushSegToASR()
+	// 2) 等待残余音频转写回填。
 	e.waitPending(12 * time.Second)
 
 	e.mu.Lock()
@@ -421,6 +422,20 @@ func (e *Engine) StopAndReport() error {
 func (e *Engine) recordLoop(rec *audio.Recorder) {
 	defer e.wgWork.Done()
 	watchStop := e.watchStop
+	// 退出前把分段器里还没吐出的音频结算掉。
+	// 1.2.5 的写法是「等本协程退出后再 flush」——那时 segCh 已经没有消费者，
+	// 请求必然超时，最后一句话（最长 10 秒）就这样丢了。
+	defer func() {
+		e.mu.Lock()
+		seg := e.seg
+		e.mu.Unlock()
+		if seg == nil {
+			return
+		}
+		if out, ok := seg.Flush(); ok {
+			e.enqueueASR([]audio.Segment{out})
+		}
+	}()
 	for {
 		select {
 		case <-watchStop:
@@ -501,6 +516,9 @@ func (e *Engine) asrLoop() {
 			continue
 		}
 		text = strings.TrimSpace(text)
+		// whisper 在静音/噪声上会输出模板句幻觉（"课堂讲课内容，语文、化学…"），
+		// 直接落库会把整堂课变成一屏复读。这里丢掉无效片段。
+		text = cleanASRText(text)
 		if text == "" || seg == nil {
 			continue
 		}
@@ -653,6 +671,14 @@ func (e *Engine) rotate(reason string, snap *capture.Snapshot) {
 		boardText = e.slideText(snap.FilePath, snap.Index)
 	}
 
+	// 开课首段如果还没采到任何材料，就把这次快照并入它，不要再开新页。
+	// 2026-11-02 地理课、化学课的第 1 页在报告里整页空白，原因就是：
+	// 点开始后 1 秒检测到翻页，首段既没截图也没文字也没说话，
+	// analyze() 把它当空段 skip 掉，报告第一页就只剩一个时间戳。
+	if e.adoptEmptyHead(snap, boardText) {
+		return
+	}
+
 	now := time.Now()
 	e.mu.Lock()
 	old := e.cur
@@ -709,6 +735,52 @@ func (e *Engine) rotate(reason string, snap *capture.Snapshot) {
 	}
 	e.persist()
 	logx.Infof("lesson", "新分段 #%d（%s）", seg.Index, reason)
+}
+
+// adoptEmptyHead 把第一次翻页的快照并入开课首段。
+//
+// 只在「首段还是空壳」时生效：没有截图、没有画面文字、没有说话、还没绑定页码。
+// 这时它对应的其实就是当前这张幻灯片，补上材料比另开一页更符合事实。
+// 返回 true 表示已并入，调用方不要再新建分段。
+func (e *Engine) adoptEmptyHead(snap *capture.Snapshot, boardText string) bool {
+	if snap == nil || snap.Index <= 0 {
+		return false
+	}
+	e.mu.Lock()
+	cur := e.cur
+	if cur == nil {
+		e.mu.Unlock()
+		return false
+	}
+	segs := 0
+	if e.sess != nil {
+		segs = len(e.sess.Segments)
+	}
+	empty := cur.ImageFile == "" && strings.TrimSpace(cur.BoardText) == "" &&
+		strings.TrimSpace(cur.Transcript) == "" && cur.SlideIndex <= 0
+	if !empty || segs > 1 {
+		e.mu.Unlock()
+		return false
+	}
+	cur.SlideIndex = snap.Index
+	if boardText != "" {
+		cur.BoardText = boardText
+	}
+	// 首段的计时从真正抓到画面的这一刻算起，否则时长会算成整个等待时间。
+	cur.CreatedAt = time.Now()
+	idx := cur.Index
+	e.lastSegAt = time.Now()
+	e.mu.Unlock()
+
+	rel := e.saveSegmentImage(cur, snap)
+	e.emit("slide", map[string]any{
+		"segmentId": cur.ID, "index": idx, "slideIndex": snap.Index,
+		"width": cur.Width, "height": cur.Height, "reason": "首段补采",
+		"image": rel, "app": snap.App, "title": snap.Title, "source": snap.Source,
+	})
+	e.persist()
+	logx.Infof("lesson", "第 %d 页并入开课首段（避免首页空白）", snap.Index)
+	return true
 }
 
 // slideText 读取 PPTX 中对应页的文字，用于在没有视觉模型时提供准确的画面内容。
@@ -772,8 +844,10 @@ func (e *Engine) saveSegmentImage(seg *store.Segment, snap *capture.Snapshot) st
 		logx.Warnf("lesson", "保存截图失败: %v", err)
 		return ""
 	}
+	e.mu.Lock()
 	seg.ImageFile = name
 	seg.SHA = fmt.Sprintf("%016x", snap.Hash)
+	e.mu.Unlock()
 	return filepath.ToSlash(filepath.Join(sessID, name))
 }
 
@@ -805,9 +879,13 @@ func (e *Engine) analyze(segID string) {
 		return
 	}
 	// 开课时创建的第一个空分段没有画面也没有语音，不必消耗模型。
+	// 但要留下痕迹：1.2.5 这里直接 return，报告里那页只剩时间戳，
+	// 而日志里一句话都没有，根本查不出为什么空。
 	if seg.ImageFile == "" && strings.TrimSpace(seg.BoardText) == "" && len([]rune(seg.Transcript)) < 40 {
+		logx.Infof("lesson", "第 %d 页没有画面与语音，跳过分析", seg.Index)
 		e.mu.Lock()
 		seg.Status = "skipped"
+		seg.Error = "本页没有采集到画面与语音"
 		e.mu.Unlock()
 		return
 	}
@@ -877,35 +955,24 @@ func (e *Engine) analyze(segID string) {
 		e.emit("segment_status", map[string]any{"segmentId": segID, "status": "failed", "error": err.Error()})
 		return
 	}
-	var out struct {
-		BoardText       string   `json:"board_text"`
-		Summary         string   `json:"summary"`
-		Notes           string   `json:"notes"`
-		KeyPoints       []string `json:"key_points"`
-		Tips            []string `json:"tips"`
-		IsCopying       *bool    `json:"is_copying"`
-		CopyingScore    int      `json:"copying_score"`
-		CopyingEvidence string   `json:"copying_evidence"`
-	}
-	if err := llm.DecodeJSON(res.Text, &out); err != nil {
+	out, derr := decodeAnalysis(res.Text)
+	parseErr := ""
+	if derr != nil {
 		// 解析失败时绝不把原始 JSON 当笔记——那会在报告里显示成一堆大括号。
-		logx.Warnf("lesson", "模型输出解析失败: %v", err)
-		if looksLikeRawJSON(res.Text) {
-			if n := extractField(res.Text, "notes"); n != "" {
-				out.Notes = n
-			}
-			if su := extractField(res.Text, "summary"); su != "" {
-				out.Summary = su
-			}
-			if bt := extractField(res.Text, "board_text"); bt != "" {
-				out.BoardText = bt
-			}
-		} else {
+		logx.Warnf("lesson", "模型输出解析失败: %v；原文开头：%s", derr, clipLog(res.Text, 160))
+		switch {
+		case looksLikeRawJSON(res.Text) || looksLikeJSONFragment(res.Text):
+			// 结构不对、字段也救不出来：宁可留空，也不要把引号和大括号
+			// 糊进报告。同时把原因写进 segment，前端能看到是模型没按格式回。
+			out.Notes = ""
+			out.Summary = ""
+			parseErr = "模型回复的结构无法识别，本页内容已丢弃"
+		default:
 			out.Notes = res.Text
 			out.Summary = firstLine(res.Text)
 		}
-		if out.Summary == "" {
-			out.Summary = "本页分析结果不完整，已保留原始文字"
+		if out.Summary == "" && out.Notes != "" {
+			out.Summary = firstLine(out.Notes)
 		}
 	}
 	// 清理数学符号乱码（网页版模型常把公式拆成逐字 Unicode 变体）。
@@ -919,10 +986,10 @@ func (e *Engine) analyze(segID string) {
 		out.Tips[i] = normalizeModelText(out.Tips[i])
 	}
 	// 兜底：任何字段都不允许以 JSON 形态残留。
-	if looksLikeRawJSON(out.Notes) {
+	if looksLikeRawJSON(out.Notes) || looksLikeJSONFragment(out.Notes) {
 		out.Notes = ""
 	}
-	if looksLikeRawJSON(out.Summary) || strings.TrimSpace(out.Summary) == "{" {
+	if looksLikeRawJSON(out.Summary) || looksLikeJSONFragment(out.Summary) || strings.TrimSpace(out.Summary) == "{" {
 		out.Summary = ""
 	}
 	e.mu.Lock()
@@ -934,15 +1001,10 @@ func (e *Engine) analyze(segID string) {
 	seg.CopyScore = clamp(out.CopyingScore)
 	seg.CopyEvidence = strings.TrimSpace(out.CopyingEvidence)
 	if seg.CopyEvidence == "" {
-		switch {
-		case out.IsCopying == nil:
+		if out.IsCopying == nil {
 			seg.CopyEvidence = "本页缺少语音转写，无法对照画面文字判断"
-		case seg.CopyScore >= 70:
-			seg.CopyEvidence = "转写内容与画面文字高度重合，缺少自己的解释与举例"
-		case seg.CopyScore >= 40:
-			seg.CopyEvidence = "大段复述画面文字，穿插了少量补充"
-		default:
-			seg.CopyEvidence = "以自主讲解为主，画面文字只作为提纲被提及"
+		} else {
+			seg.CopyEvidence = copyFallbackEvidence(seg.CopyScore)
 		}
 	}
 	seg.Notes = dedupeNotes(seg.Notes)
@@ -953,6 +1015,7 @@ func (e *Engine) analyze(segID string) {
 		seg.Copying = false
 		seg.CopyScore = -1
 	}
+	seg.Error = parseErr
 	seg.Status = "done"
 	seg.Model = res.Model
 	seg.Tokens = res.Usage.TotalTokens
@@ -1082,17 +1145,34 @@ func joinTranscript(old, add string) string {
 }
 
 // extractField 在 JSON 解析失败时按字段名兜底取值。
+// 支持 "notes": "文本" 与 "notes": ["行1","行2"] 两种写法（网页版模型两种都会出）。
 func extractField(raw, key string) string {
+	// 数组形式优先：字符串正则会把数组里的第一个元素误当整段。
+	reArr := regexp.MustCompile(`"` + key + `"\s*:\s*\[([\s\S]*?)\]`)
+	if m := reArr.FindStringSubmatch(raw); m != nil {
+		var parts []string
+		for _, mm := range regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`).FindAllStringSubmatch(m[1], -1) {
+			if v := unquoteLoose(mm[1]); strings.TrimSpace(v) != "" {
+				parts = append(parts, strings.TrimSpace(v))
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, "\n")
+		}
+	}
 	re := regexp.MustCompile(`"` + key + `"\s*:\s*"((?:[^"\\]|\\.)*)"`)
 	m := re.FindStringSubmatch(raw)
 	if m == nil {
 		return ""
 	}
-	v, err := strconv.Unquote(`"` + m[1] + `"`)
-	if err != nil {
-		return strings.TrimSpace(strings.ReplaceAll(m[1], `\n`, "\n"))
+	return strings.TrimSpace(unquoteLoose(m[1]))
+}
+
+func unquoteLoose(s string) string {
+	if v, err := strconv.Unquote(`"` + s + `"`); err == nil {
+		return v
 	}
-	return strings.TrimSpace(v)
+	return strings.ReplaceAll(s, `\n`, "\n")
 }
 
 // dedupeNotes 去掉模型偶发的连续重复行。
@@ -1111,6 +1191,60 @@ func dedupeNotes(s string) string {
 		out = append(out, l)
 	}
 	return strings.Join(out, "\n")
+}
+
+// EditNote 手动修改某一页的笔记或要点。
+//
+// 1.2.5 的 HTTP 层直接拿 Session() 的裸指针在锁外改字段，而引擎此时可能正在
+// analyze() 里持锁写同一个 segment——轻则改动丢失，重则把会话 JSON 写坏。
+// 修改统一走这里：持锁改、解锁后落盘。
+func (e *Engine) EditNote(sessionID, segID, notes, summary string) error {
+	e.mu.Lock()
+	if e.sess != nil && (sessionID == "" || e.sess.ID == sessionID) {
+		for _, seg := range e.sess.Segments {
+			if seg.ID != segID {
+				continue
+			}
+			if notes != "" {
+				seg.Notes = notes
+			}
+			if summary != "" {
+				seg.Summary = summary
+			}
+			cp := *seg
+			e.mu.Unlock()
+			e.persist()
+			e.emit("analysis", map[string]any{"segment": cp, "edited": true})
+			return nil
+		}
+		e.mu.Unlock()
+		return fmt.Errorf("找不到该页")
+	}
+	e.mu.Unlock()
+
+	if sessionID == "" {
+		return fmt.Errorf("当前没有进行中的课堂")
+	}
+	sess, err := e.store.Load(sessionID)
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, seg := range sess.Segments {
+		if seg.ID == segID {
+			if notes != "" {
+				seg.Notes = notes
+			}
+			if summary != "" {
+				seg.Summary = summary
+			}
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("找不到该页")
+	}
+	return e.store.Save(sess)
 }
 
 // AppendUtterance 手动补录一段转写（没有麦克风或识别失败时使用）。
@@ -1169,4 +1303,14 @@ func firstLine(s string) string {
 		return string([]rune(s)[:60])
 	}
 	return s
+}
+
+// clipLog 截断长文本用于日志，避免把整段模型输出写进日志文件。
+func clipLog(s string, n int) string {
+	t := strings.TrimSpace(strings.ReplaceAll(s, "\n", " "))
+	r := []rune(t)
+	if len(r) <= n {
+		return t
+	}
+	return string(r[:n]) + "…"
 }

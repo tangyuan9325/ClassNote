@@ -245,7 +245,13 @@ func setPluginEnabled(iccDir, pluginID string, enabled bool) error {
 	path := filepath.Join(iccDir, "Configs", "PluginConfig.json")
 	m := map[string]bool{}
 	if raw, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(stripBOM(raw), &m)
+		// 解析失败必须中止：1.2.5 忽略错误后 m 是空表，接着整表写回，
+		// 会把 ICC 里其他插件的启用状态一次性清空。
+		if uerr := json.Unmarshal(stripBOM(raw), &m); uerr != nil {
+			return fmt.Errorf("解析 %s 失败（已中止，避免覆盖其他插件配置）: %w", path, uerr)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 	if enabled {
 		m[pluginID] = true

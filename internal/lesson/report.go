@@ -46,6 +46,7 @@ type reportPage struct {
 	Tips       []string
 	Copying    bool
 	CopyScore  int
+	ScoreLabel string
 	Evidence   string
 	BoardText  string
 	Image      template.URL
@@ -85,7 +86,8 @@ func (e *Engine) GenerateReport(sess *store.Session) error {
 	}
 	view.TimeRange = sess.StartedAt.Format("15:04") + " - " + end.Format("15:04")
 	for _, seg := range sess.Segments {
-		view.Words += len([]rune(seg.Transcript))
+		// 只统计清洗后的有效转写，别再拿幻觉文本凑字数。
+		view.Words += len([]rune(cleanTranscriptForReport(seg.Transcript)))
 	}
 	dur := end.Sub(sess.StartedAt)
 	view.Duration = fmt.Sprintf("%d 分钟", int(dur.Minutes()))
@@ -93,19 +95,23 @@ func (e *Engine) GenerateReport(sess *store.Session) error {
 	totalScore, weight := 0, 0
 	for _, seg := range sess.Segments {
 		// 渲染前统一清洗：老会话里可能存着没解析成功的 JSON 或数学乱码。
-		summary := normalizeModelText(seg.Summary)
-		notes := normalizeModelText(seg.Notes)
-		evidence := normalizeModelText(seg.CopyEvidence)
-		transcript := normalizeModelText(seg.Transcript)
-		board := normalizeModelText(seg.BoardText)
-		if looksLikeRawJSON(notes) {
-			if n := extractField(notes, "notes"); n != "" {
-				notes = n
+		// 注意顺序——必须先在**原始文本**上判断是不是 JSON，再规范化；
+		// 规范化会把引号/下划线改得面目全非，判断就失效了（1.2.5 的实际问题）。
+		rawNotes := seg.Notes
+		if looksLikeRawJSON(rawNotes) || looksLikeJSONFragment(rawNotes) {
+			if n := extractField(rawNotes, "notes"); n != "" {
+				rawNotes = n
 			} else {
-				notes = "（本页分析结果异常，已略去）"
+				rawNotes = ""
 			}
 		}
-		if looksLikeRawJSON(summary) || strings.TrimSpace(summary) == "{" {
+		summary := normalizeModelText(seg.Summary)
+		notes := normalizeModelText(rawNotes)
+		evidence := normalizeModelText(seg.CopyEvidence)
+		// 先清 ASR 幻觉再规范化：老会话里可能已经存进了大段复读的幻觉文本。
+		transcript := normalizeModelText(cleanTranscriptForReport(seg.Transcript))
+		board := normalizeModelText(seg.BoardText)
+		if looksLikeRawJSON(summary) || looksLikeJSONFragment(summary) || strings.TrimSpace(summary) == "{" {
 			summary = firstLine(notes)
 		}
 		if strings.TrimSpace(board) == "" {
@@ -126,7 +132,7 @@ func (e *Engine) GenerateReport(sess *store.Session) error {
 		cp := reportPage{
 			Index: seg.Index, SlideIndex: seg.SlideIndex, Summary: summary,
 			Notes: notes, KeyPoints: kp, Tips: tp,
-			Copying: seg.Copying, CopyScore: seg.CopyScore, Evidence: evidence,
+			Copying: seg.Copying, CopyScore: seg.CopyScore, ScoreLabel: scoreLabel(seg.CopyScore), Evidence: evidence,
 			Transcript: transcript,
 			BoardText:  board,
 			TimeLabel:  seg.CreatedAt.Format("15:04"),
@@ -162,14 +168,8 @@ func (e *Engine) GenerateReport(sess *store.Session) error {
 	case !speech:
 		// 全程没有语音，不能给出“以讲解为主”这种结论。
 		view.CopyLabel = "无语音证据"
-	case view.CopyRate >= 75:
-		view.CopyLabel = "高度照搬"
-	case view.CopyRate >= 50:
-		view.CopyLabel = "部分照搬"
-	case view.CopyRate >= 25:
-		view.CopyLabel = "以讲解为主"
 	default:
-		view.CopyLabel = "以自主讲解为主"
+		view.CopyLabel = copyLabel(view.CopyRate)
 	}
 	view.Summary = defaultSummary(view.CopyRate, len(view.Pages), speech)
 
@@ -206,7 +206,7 @@ func (e *Engine) GenerateReport(sess *store.Session) error {
 
 	rep := &store.Report{
 		CreatedAt: time.Now(), HTMLPath: htmlPath, PDFPath: pdfPath,
-		Copying: view.CopyRate >= 60, CopyRate: view.CopyRate,
+		Copying: view.CopyRate >= CopyFlagFrom, CopyRate: view.CopyRate,
 		Summary: view.Summary, Title: view.Title,
 	}
 
@@ -257,34 +257,15 @@ func (e *Engine) aiReportSummary(client llm.Client, sess *store.Session) (aiRepo
 		logx.Warnf("report", "生成总体评价失败: %v", err)
 		return aiReport{}, false
 	}
-	var out struct {
-		Title       string   `json:"title"`
-		CopyRate    int      `json:"copy_rate"`
-		Summary     string   `json:"summary"`
-		Highlights  []string `json:"highlights"`
-		Problems    []string `json:"problems"`
-		Suggestions []string `json:"suggestions"`
-	}
-	if err := llm.DecodeJSON(res.Text, &out); err != nil {
+	out, derr := decodeReport(res.Text)
+	if derr != nil {
+		logx.Warnf("report", "报告 JSON 解析失败: %v", derr)
 		return aiReport{}, false
 	}
 	return aiReport{
 		summary: out.Summary, copyRate: clamp(out.CopyRate), highlights: out.Highlights,
 		problems: out.Problems, suggestions: out.Suggestions, title: out.Title,
 	}, true
-}
-
-func copyLabel(rate int) string {
-	switch {
-	case rate >= 75:
-		return "高度照搬"
-	case rate >= 50:
-		return "部分照搬"
-	case rate >= 25:
-		return "以讲解为主"
-	default:
-		return "以自主讲解为主"
-	}
 }
 
 func defaultSummary(rate, pages int, speech bool) string {
@@ -363,6 +344,8 @@ var reportTpl = template.Must(template.New("report").Funcs(template.FuncMap{
 		return template.HTML(esc)
 	},
 	"pct": func(v int) string { return fmt.Sprintf("%d%%", v) },
+	// notes 渲染受控 Markdown：模型写的是 "## 标题 / - 列表"，直接 nl2br 会原样打印。
+	"notes": func(s string) template.HTML { return renderNotes(s) },
 }).Parse(reportHTML))
 
 func renderReport(v reportView) ([]byte, error) {

@@ -61,6 +61,11 @@ type Segmenter struct {
 	pauseAt int
 	lowRun  int
 	lowFrom int
+
+	// pending 保存不足一帧的尾部样本。
+	// 1.2.5 直接把它们丢掉：1040 样本一帧、每次回调 640 块时，
+	// 每块都会丢一点，累积起来就是持续丢音，还会让帧边界相对音频流漂移。
+	pending []int16
 }
 
 // NewSegmenter 创建切分器。
@@ -100,6 +105,14 @@ func (s *Segmenter) Speaking() bool { return s.speech }
 
 // Push 输入 PCM16 数据，返回已完成的语音段。
 func (s *Segmenter) Push(pcm []int16) []Segment {
+	// 把上次剩下的不足一帧的样本接到前面，保证帧边界连续。
+	if len(s.pending) > 0 {
+		buf := make([]int16, 0, len(s.pending)+len(pcm))
+		buf = append(buf, s.pending...)
+		buf = append(buf, pcm...)
+		pcm = buf
+		s.pending = s.pending[:0]
+	}
 	var out []Segment
 	for len(pcm) >= s.frame {
 		chunk := pcm[:s.frame]
@@ -151,11 +164,22 @@ func (s *Segmenter) Push(pcm []int16) []Segment {
 			}
 		}
 	}
+	// 剩下的不足一帧，留到下次 Push 一起处理，不能丢。
+	if len(pcm) > 0 {
+		s.pending = append(s.pending, pcm...)
+	}
 	return out
 }
 
 // Flush 强制结束当前语音段。
 func (s *Segmenter) Flush() (Segment, bool) {
+	if len(s.pending) > 0 {
+		// 收尾时把不足一帧的尾巴补进去，否则最后一个字会缺一截。
+		if s.speech {
+			s.cur = append(s.cur, s.pending...)
+		}
+		s.pending = s.pending[:0]
+	}
 	if !s.speech {
 		return Segment{}, false
 	}

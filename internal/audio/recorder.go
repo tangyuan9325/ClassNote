@@ -87,6 +87,10 @@ type Recorder struct {
 	rate    int
 	peak    float64
 	err     error
+	// dropped 是被消费端堵掉而丢弃的音频块数。
+	// 1.2.5 丢得很安静：这里没有计数，Err() 也永远是 nil，
+	// 麦克风中途被拔掉或磁盘卡住导致的大量丢音，事后完全查不出来。
+	dropped int
 }
 
 // New 创建采集器。
@@ -108,10 +112,24 @@ func (r *Recorder) Peak() float64 {
 }
 
 // Err 返回采集过程中的错误。
+// 持续丢音也报出来：单块丢弃无所谓，成片丢弃意味着转写会缺内容。
 func (r *Recorder) Err() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.err
+	if r.err != nil {
+		return r.err
+	}
+	if r.dropped >= 20 {
+		return fmt.Errorf("音频采集丢块 %d 次，转写可能不完整", r.dropped)
+	}
+	return nil
+}
+
+// Dropped 返回被丢弃的音频块数。
+func (r *Recorder) Dropped() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.dropped
 }
 
 // Start 开始采集。
@@ -242,7 +260,10 @@ func (r *Recorder) poll() {
 					select {
 					case r.out <- chunk:
 					default:
-						// 消费端太慢时丢弃，避免阻塞采集线程。
+						// 消费端太慢时丢弃，避免阻塞采集线程——但必须记账。
+						r.mu.Lock()
+						r.dropped++
+						r.mu.Unlock()
 					}
 				}
 			}

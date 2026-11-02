@@ -109,7 +109,24 @@ public sealed class BridgeService : IHostedService
         var res = ctx.Response;
         try
         {
-            res.Headers["Access-Control-Allow-Origin"] = "*";
+            // 只对回环页面放行 CORS，且不再用 "*"。
+            // 1.2.5 里这里是 Access-Control-Allow-Origin: *，而 /state 不需要任何
+            // 凭据，等于学生电脑上任意一个网页都能读出完整课表（班级、科目、上课
+            // 时间），也能往 ClassIsland 里灌任意通知。跨站请求一定带 Origin，
+            // 所以按 Origin 判断来源就够了，ClassNote 自己是原生的 HttpClient，
+            // 不带 Origin，不受影响。
+            var origin = req.Headers["Origin"];
+            if (!string.IsNullOrEmpty(origin))
+            {
+                if (!IsLoopbackOrigin(origin))
+                {
+                    res.StatusCode = 403;
+                    res.Close();
+                    return;
+                }
+                res.Headers["Access-Control-Allow-Origin"] = origin;
+                res.Headers["Vary"] = "Origin";
+            }
             res.Headers["Access-Control-Allow-Headers"] = "Content-Type";
             res.Headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS";
             if (req.HttpMethod == "OPTIONS")
@@ -132,6 +149,16 @@ public sealed class BridgeService : IHostedService
             }
             if (path == "/notify" && req.HttpMethod == "POST")
             {
+                // 表单提交属于"无需预检的简单请求"，只靠 CORS 挡不住，
+                // 这里再要求 JSON：跨站页面发 application/json 必须先预检，
+                // 而预检已经在上面的 Origin 校验里被拒掉了。
+                var ctype = req.ContentType ?? "";
+                if (!ctype.StartsWith("application/json", StringComparison.OrdinalIgnoreCase))
+                {
+                    res.StatusCode = 415;
+                    await WriteJson(res, new { ok = false, error = "请使用 application/json 提交" });
+                    return;
+                }
                 string body;
                 using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
                     body = await reader.ReadToEndAsync();
@@ -157,6 +184,15 @@ public sealed class BridgeService : IHostedService
             BridgeLog.Write("请求处理失败：" + ex.Message);
             try { res.StatusCode = 500; res.Close(); } catch { }
         }
+    }
+
+    /// <summary>判断 Origin 是否来自本机回环地址。</summary>
+    private static bool IsLoopbackOrigin(string origin)
+    {
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var u)) return false;
+        var h = u.Host;
+        return h == "127.0.0.1" || h == "localhost" || h == "::1" || h == "[::1]"
+            || h.StartsWith("127.", StringComparison.Ordinal);
     }
 
     private static async Task WriteJson(HttpListenerResponse res, object data)

@@ -68,6 +68,27 @@ func Open(dir string) (*Registry, error) {
 	return r, nil
 }
 
+// Empty 返回一个不落盘的空仓库。
+// 技能目录创建失败时用它兜底，避免 /api/plugins 系列接口 nil 解引用直接 500。
+func Empty() *Registry { return &Registry{dir: ""} }
+
+// validID 限制 id 只允许字母、数字、点、下划线、连字符。
+// 之前 id 直接拼进文件路径，传 "../../config" 就能写到目录外或删掉任意 .json。
+func validID(id string) bool {
+	if id == "" || len(id) > 64 || strings.HasPrefix(id, ".") {
+		return false
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-', r == '_', r == '.':
+		default:
+			return false
+		}
+	}
+	return !strings.Contains(id, "..")
+}
+
 // Dir 返回目录。
 func (r *Registry) Dir() string { return r.dir }
 
@@ -97,8 +118,14 @@ func (r *Registry) Save(s Skill) error {
 	if strings.TrimSpace(s.ID) == "" {
 		return fmt.Errorf("技能包缺少 id")
 	}
+	if !validID(s.ID) {
+		return fmt.Errorf("技能包 id 只能包含字母、数字、点、下划线与连字符")
+	}
 	if strings.TrimSpace(s.Name) == "" {
 		return fmt.Errorf("技能包缺少名称")
+	}
+	if r.dir == "" {
+		return fmt.Errorf("技能包目录不可用")
 	}
 	raw, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
@@ -119,7 +146,9 @@ func (r *Registry) SetEnabled(id string, on bool) bool {
 		if r.skill[i].ID == id {
 			r.skill[i].Enabled = on
 			raw, _ := json.MarshalIndent(r.skill[i], "", "  ")
-			_ = os.WriteFile(filepath.Join(r.dir, id+".json"), raw, 0o644)
+			if r.dir != "" && validID(id) {
+				_ = os.WriteFile(filepath.Join(r.dir, id+".json"), raw, 0o644)
+			}
 			return true
 		}
 	}
@@ -128,6 +157,12 @@ func (r *Registry) SetEnabled(id string, on bool) bool {
 
 // Delete 删除技能包。
 func (r *Registry) Delete(id string) error {
+	if !validID(id) {
+		return fmt.Errorf("技能包 id 非法")
+	}
+	if r.dir == "" {
+		return fmt.Errorf("技能包目录不可用")
+	}
 	if err := os.Remove(filepath.Join(r.dir, id+".json")); err != nil {
 		return err
 	}

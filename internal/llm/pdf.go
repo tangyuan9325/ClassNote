@@ -3,9 +3,9 @@ package llm
 import (
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -36,7 +36,10 @@ func RenderPDF(htmlPath, outPath, profileDir string) error {
 	}
 	defer br.Close()
 
-	u := "file:///" + strings.ReplaceAll(strings.TrimPrefix(filepath.ToSlash(abs), "/"), " ", "%20")
+	// 只用空格转义是不够的：路径里出现 # % ? 时 Chromium 会当成片段/查询截断，
+	// 报告页直接打印失败（用户名带 # 或放在 "C:\100%\" 这种目录下就会中招）。
+	// 交给 url.URL 做完整转义。
+	u := (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String()
 	page, err := br.Page(proto.TargetCreateTarget{URL: u})
 	if err != nil {
 		return fmt.Errorf("打开报告页面失败: %w", err)
