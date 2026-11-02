@@ -34,7 +34,7 @@ import (
 var webAssets embed.FS
 
 var (
-	version   = "1.2.6"
+	version   = "1.2.6.1"
 	buildTime = "dev"
 )
 
@@ -168,6 +168,16 @@ func main() {
 	srv.WriteRuntime()
 	url := fmt.Sprintf("http://127.0.0.1:%d", p)
 	logx.Infof("main", "服务地址 %s", url)
+
+	// 用网页版 AI 时，配置完成后就把每门课的固定对话准备好：
+	// 之后整堂课每页只发材料，不再重复上千字的系统提示。
+	// 延后几秒再跑，别和界面启动抢时间；失败也不影响使用（分析前会按需重建）。
+	if boot := cfgStore.Get(); boot.Provider.Mode == "web" && !boot.WebAI.NoPrimeOnStart {
+		go func() {
+			time.Sleep(6 * time.Second)
+			srv.PrimeChats(false)
+		}()
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

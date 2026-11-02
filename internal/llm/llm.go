@@ -100,6 +100,26 @@ type Client interface {
 	Ready() bool
 }
 
+// ChatManager 由网页版客户端实现，供设置页管理「每科一条对话」。
+// API 模型没有对话概念，不做实现。
+type ChatManager interface {
+	Chats() []WebChat
+	SetChat(subject, url string) error
+	ClearChat(subject string) bool
+	Prewarm(ctx context.Context, subjects []string, system string, force bool) []PrewarmResult
+	ChatStatus() ChatStatus
+	SetPriming(busy bool, last []PrewarmResult)
+	LastPrewarm() []PrewarmResult
+}
+
+// ChatManagerOf 从客户端里取出对话管理能力，没有则返回 nil。
+func ChatManagerOf(c Client) ChatManager {
+	if m, ok := c.(ChatManager); ok {
+		return m
+	}
+	return nil
+}
+
 // ErrNotConfigured 表示缺少配置。
 var ErrNotConfigured = errors.New("模型尚未完成配置")
 

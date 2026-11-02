@@ -27,6 +27,12 @@ type WebClient struct {
 	br      *rod.Browser
 	temp    bool
 	dir     string
+	// chats 按学科持久化对话地址：同一门课永远打开同一条会话，
+	// 系统提示只写一次，后续每页只发材料。
+	chats *webChatStore
+	// busy/last 记录后台「准备对话」的进度，供设置页展示。
+	busy bool
+	last []PrewarmResult
 }
 
 // SitePreset 是网页版站点的默认选择器。
@@ -86,7 +92,13 @@ func NewWebClient(cfg config.Config) (Client, error) {
 	if dir == "" {
 		dir = filepath.Join(os.TempDir(), "classnote-webprofile")
 	}
-	return &WebClient{cfg: cfg.WebAI, dir: dir}, nil
+	chatsFile := cfg.WebAI.ChatsFile
+	if chatsFile == "" {
+		// 放在 profile 目录旁边：一份安装只有一份对话记录，
+		// 换数据目录时跟着走，不会散落在临时目录里。
+		chatsFile = filepath.Join(filepath.Dir(dir), "webai-chats.json")
+	}
+	return &WebClient{cfg: cfg.WebAI, dir: dir, chats: newWebChatStore(chatsFile)}, nil
 }
 
 // Describe 返回描述。
@@ -231,7 +243,28 @@ func (c *WebClient) subjectChat(page *rod.Page, subject string) {
 	c.mu.Unlock()
 }
 
+// chatURLRe 匹配各家网页版的会话地址段（qwen: /c/<id>，deepseek: /a/chat/s/<id>）。
+var chatURLRe = regexp.MustCompile(`/(?:c|chat|conversation|s|a/chat/s)/[A-Za-z0-9_-]{8,}`)
+
+// isChatURL 判断地址是否指向一条具体会话，而不是首页。
+// 只有拿到会话级地址才值得记住：记成首页等于每次都开新对话，
+// 却因为标了「提示词已写过」而不再发系统提示，模型会彻底失去角色设定。
+func isChatURL(u string) bool { return chatURLRe.MatchString(u) }
+
+// pageURL 读取当前标签页地址。
+func pageURL(page *rod.Page) string {
+	info, err := page.Info()
+	if err != nil || info == nil {
+		return ""
+	}
+	return info.URL
+}
+
 // Stream 网页版没有真正的流式接口，这里用轮询模拟。
+//
+// 同一门课固定在同一条对话里：先按学科查已记录的会话地址，直接打开它；
+// 如果这条对话里还没写过系统提示，就把系统提示并入本次材料一起发（只发一次），
+// 之后每页只发材料——既不用重复上千字的角色设定，模型也能承接前几页。
 func (c *WebClient) Stream(ctx context.Context, msgs []Message, opt Options, onDelta func(string)) (*Result, error) {
 	dir := c.dir
 	c.mu.Lock()
@@ -250,7 +283,24 @@ func (c *WebClient) Stream(ctx context.Context, msgs []Message, opt Options, onD
 		}
 	}
 
-	page, err := br.Page(proto.TargetCreateTarget{URL: c.cfg.URL})
+	subject := strings.TrimSpace(opt.Subject)
+	if c.perPage() {
+		subject = ""
+	}
+	ref, hasRef := WebChat{}, false
+	if subject != "" {
+		if r, ok := c.chatStore().get(subject); ok && r.URL != "" {
+			ref, hasRef = r, true
+		}
+	}
+	// primed 表示这条对话里已经有系统提示，本次只发材料。
+	primed := hasRef && ref.Primed
+	target := c.cfg.URL
+	if hasRef {
+		target = ref.URL
+	}
+
+	page, err := br.Page(proto.TargetCreateTarget{URL: target})
 	if err != nil {
 		return nil, fmt.Errorf("打开页面失败: %w", err)
 	}
@@ -263,12 +313,20 @@ func (c *WebClient) Stream(ctx context.Context, msgs []Message, opt Options, onD
 	// 单页应用还需要时间渲染出输入框与会话容器。
 	time.Sleep(2600 * time.Millisecond)
 	dismissPopup(page)
-	// 每门学科一条独立对话历史，避免把垃圾堆满侧边栏。
-	c.subjectChat(page, opt.Subject)
+	// 只有完全不知道这门课用哪条对话时，才按学科开新会话。
+	// 已经有固定地址就绝不能点「新对话」，那会把累积的上下文丢掉。
+	if !hasRef {
+		c.subjectChat(page, opt.Subject)
+	}
 
 	inputSel := c.sel("input", "textarea")
 	el, err := page.Timeout(20 * time.Second).Element(inputSel)
 	if err != nil {
+		if hasRef {
+			// 对话被删或登录态过期：清掉记录，下次重建，避免一直卡在死地址上。
+			c.chatStore().delete(subject)
+			logx.Warnf("webai", "%s 的对话地址已失效（%s），已清除记录，下次将重建", subject, ref.URL)
+		}
 		return nil, fmt.Errorf("找不到输入框（%s），请在设置中调整选择器", inputSel)
 	}
 	if err := el.ScrollIntoView(); err != nil {
@@ -276,11 +334,13 @@ func (c *WebClient) Stream(ctx context.Context, msgs []Message, opt Options, onD
 	}
 	_ = el.Click(proto.InputMouseButtonLeft, 1)
 
-	prompt, images := flatten(msgs)
+	prompt, images := flatten(msgs, primed)
 	// flatten 会把截图落到 %TEMP%，1.2.5 从不回收：一堂 19 页的课就在
 	// 学生本机留下 19 张课堂画面，越积越多。这里用完即删。
 	defer cleanupTempImages(images)
-	if opt.FollowUp {
+	// 历史回答一律删掉，但系统提示只在「这条对话还没写过」时才精简掉。
+	// 1.2.6 之前无差别精简，正是「只有第一页进报告」的根因。
+	if opt.FollowUp && primed {
 		prompt = slimPrompt(prompt)
 	}
 	if len(images) > 0 {
@@ -296,6 +356,9 @@ func (c *WebClient) Stream(ctx context.Context, msgs []Message, opt Options, onD
 	}
 
 	baseline := readBodyText(page)
+	// 已有对话里页面本来就有一堆历史消息，必须用「助手消息数量增加」来判断新回复，
+	// 否则一上来读到的就是上一页的回答。
+	before := assistantCount(page)
 	if err := el.Input(prompt); err != nil {
 		return nil, fmt.Errorf("输入失败: %w", err)
 	}
@@ -304,6 +367,9 @@ func (c *WebClient) Stream(ctx context.Context, msgs []Message, opt Options, onD
 	if !c.send(page, el, prompt) {
 		return nil, fmt.Errorf("消息未能发送，请检查网页版是否已登录")
 	}
+	// 回复开始生成后立刻把对话地址记下来：等到回答结束再记，
+	// 中途超时就会丢掉这条对话，下一节课白建一次。
+	c.rememberChat(page, subject, primed, hasRef)
 
 	// 轮询回复。
 	replySel := c.sel("reply", "")
@@ -315,7 +381,17 @@ func (c *WebClient) Stream(ctx context.Context, msgs []Message, opt Options, onD
 	begin := time.Now()
 	for time.Now().Before(deadline) {
 		time.Sleep(900 * time.Millisecond)
+		// 必须确认出现了「新的」助手气泡，否则在已有对话里读到的就是上一页的回答。
+		// 少数站点不新增气泡而是原地追加，那种情况用「正在生成」兜住。
+		fresh := assistantCount(page) > before
+		if !fresh && generating(page) {
+			fresh = true
+		}
 		raw, ok := readReply(page, replySel, baseline)
+		if !fresh {
+			// 还没有新的助手气泡：读到的是历史回答，不能当成本页结果。
+			continue
+		}
 		cur := cleanReply(raw, prompt)
 		if cur == "" {
 			continue
@@ -343,6 +419,36 @@ func (c *WebClient) Stream(ctx context.Context, msgs []Message, opt Options, onD
 		return nil, fmt.Errorf("等待网页版回答超时，请确认已登录且网络正常")
 	}
 	return &Result{Text: strings.TrimSpace(last), Via: "web", Model: "web:" + hostOf(c.cfg.URL)}, nil
+}
+
+// rememberChat 把当前对话地址与「提示词已写过」状态落盘。
+func (c *WebClient) rememberChat(page *rod.Page, subject string, primed, hadRef bool) {
+	if subject == "" {
+		return
+	}
+	u := pageURL(page)
+	if !isChatURL(u) {
+		if hadRef {
+			// 记录里的那条对话打不开了，站点把地址退回了首页——
+			// 说明对话被删或登录态换了。清掉记录，下次重新建并重发系统提示，
+			// 否则会一直卡在一个死地址上，每页都发出去却永远等不到回答。
+			c.chatStore().delete(subject)
+			logx.Warnf("webai", "%s 的对话已失效，已清除记录", subject)
+		}
+		// 首次新建却拿不到会话地址（站点不把 id 放进地址栏）：
+		// 不记录。宁可每次重发系统提示，也不能记一条指向首页的地址。
+		return
+	}
+	ref, _ := c.chatStore().get(subject)
+	ref.Subject = subject
+	ref.URL = u
+	ref.Source = "runtime"
+	if !primed {
+		ref.Primed = true
+		ref.PrimedAt = time.Now().Format(time.RFC3339)
+	}
+	ref.Sessions++
+	c.chatStore().put(ref)
 }
 
 // send 发送消息。部分站点发送后不会清空输入框，因此以"出现新的助手消息"或"正在生成"作为成功判据。
@@ -732,10 +838,17 @@ func slimPrompt(p string) string {
 }
 
 // flatten 把消息压平成一段提示词，并把图片写入临时文件供上传。
-func flatten(msgs []Message) (string, []string) {
+// flatten 把消息压平成一段提示词，同时把图片落到临时文件。
+//
+// skipSystem=true 用于「这门课的对话里已经写过系统提示」的情况：此时只发
+// 本页材料，既省 token 也省时间，还不会把角色设定重复塞进对话历史。
+func flatten(msgs []Message, skipSystem bool) (string, []string) {
 	var sb strings.Builder
 	var images []string
 	for _, m := range msgs {
+		if skipSystem && m.Role == RoleSystem {
+			continue
+		}
 		switch m.Role {
 		case RoleSystem:
 			sb.WriteString("【要求】\n")
@@ -770,7 +883,7 @@ func flatten(msgs []Message) (string, []string) {
 				sb.WriteString("（请结合附图作答）\n")
 			}
 		}
-		if m.Role == RoleSystem {
+		if m.Role == RoleSystem && !skipSystem {
 			sb.WriteString("\n【任务】\n")
 		}
 	}

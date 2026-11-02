@@ -95,6 +95,8 @@ func (s *Server) RefreshClient() (llm.Client, error) {
 	if cfg.WebAI.ProfileDir == "" {
 		cfg.WebAI.ProfileDir = s.paths.WebCache
 	}
+	// 每门课一条固定对话的记录文件：放在数据目录里，跟着安装走。
+	cfg.WebAI.ChatsFile = filepath.Join(s.paths.Root, "data", "webai-chats.json")
 	c, err := llm.New(cfg)
 	s.clientMu.Lock()
 	s.client = c
@@ -123,6 +125,10 @@ func (s *Server) routes() {
 	m.HandleFunc("/api/provider/models", s.handleModels)
 	m.HandleFunc("/api/webai/login", s.handleWebLogin)
 	m.HandleFunc("/api/webai/check", s.handleWebCheck)
+	m.HandleFunc("/api/webai/chats", s.handleWebChats)
+	m.HandleFunc("/api/webai/chats/set", s.handleWebChatSet)
+	m.HandleFunc("/api/webai/prime", s.handleWebChatPrime)
+	m.HandleFunc("/api/ci/subjects", s.handleCISubjects)
 	m.HandleFunc("/api/status", s.handleStatus)
 	m.HandleFunc("/api/events", s.handleSSE)
 	m.HandleFunc("/api/lesson/start", s.handleStart)

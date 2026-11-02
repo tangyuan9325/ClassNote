@@ -150,6 +150,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if incoming.WebAI.ProfileDir == "" {
 		incoming.WebAI.ProfileDir = cur.WebAI.ProfileDir
 	}
+	if incoming.WebAI.ChatMode == "" {
+		// 界面没传就按「每科一条对话」处理，这是 1.2.6.1 起的默认。
+		incoming.WebAI.ChatMode = "per-subject"
+	}
 	cfg, err := s.cfg.Update(func(c *config.Config) error {
 		*c = incoming
 		return nil
@@ -167,6 +171,13 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		resp["clientError"] = cerr.Error()
 	} else if client != nil {
 		resp["client"] = client.Describe()
+	}
+	// 网页版换了站点、或者监听科目变了，原来的对话就对不上了：重做准备。
+	if cfg.Provider.Mode == "web" && !cfg.WebAI.NoPrimeOnStart &&
+		(cur.Provider.Mode != "web" || cur.WebAI.Site != cfg.WebAI.Site ||
+			cur.WebAI.URL != cfg.WebAI.URL || !sameStrings(cur.Lesson.Subjects, cfg.Lesson.Subjects)) {
+		s.PrimeChats(false)
+		resp["priming"] = true
 	}
 	// 切换“允许局域网”立刻重绑端口，不再要求手动重启。
 	if cfg.Server.Access != oldAccess {
@@ -1332,3 +1343,21 @@ func (s *Server) handleModelsAlias(w http.ResponseWriter, r *http.Request) {
 var _ = strconv.Itoa
 var _ = logx.Infof
 var _ = store.Meta{}
+
+// sameStrings 比较两个字符串切片是否一致（顺序无关）。
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := make(map[string]int, len(a))
+	for _, v := range a {
+		m[v]++
+	}
+	for _, v := range b {
+		m[v]--
+		if m[v] < 0 {
+			return false
+		}
+	}
+	return true
+}

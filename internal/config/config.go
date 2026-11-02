@@ -90,6 +90,17 @@ type WebAIConfig struct {
 	LoggedIn     bool              `json:"loggedIn"`
 	Selectors    map[string]string `json:"selectors,omitempty"`
 	ReplyTimeout int               `json:"replyTimeoutSec"`
+	// ChatsFile 是「每门课一条固定对话」的记录文件，由程序在启动时填成
+	// <数据目录>/webai-chats.json，不写进配置文件。
+	ChatsFile string `json:"-"`
+	// ChatMode 决定网页版怎么用对话：
+	//   per-subject（默认）每门课固定一条对话，系统提示只写一次；
+	//   per-page 每页新开对话（旧行为，页面之间不串上下文）。
+	ChatMode string `json:"chatMode,omitempty"`
+	// NoPrimeOnStart 取反语义：零值即「启动时自动准备对话」。
+	// 用 PrimeOnStart 的话，老配置文件里没有这个字段，升级后会被当成关闭，
+	// 正好和「配好就能用」的预期相反。
+	NoPrimeOnStart bool `json:"noPrimeOnStart,omitempty"`
 }
 
 // ASRConfig 描述语音转写参数。
@@ -226,6 +237,7 @@ func Default() Config {
 			Headless:     false,
 			ReplyTimeout: 180,
 			Selectors:    map[string]string{},
+			ChatMode:     "per-subject",
 		},
 		ASR: ASRConfig{
 			Mode:       "api",

@@ -72,7 +72,6 @@ type Engine struct {
 	client      llm.Client
 	asrCli      *asr.Transcriber
 	skillPrompt string
-	lastSubject string
 	emitFn      func(Event)
 
 	sess      *store.Session
@@ -941,8 +940,10 @@ func (e *Engine) analyze(segID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
 	defer cancel()
 	e.mu.Lock()
-	followUp := e.lastSubject == subject && subject != ""
-	e.lastSubject = subject
+	// 网页版每门课固定一条对话，跨课堂也延续。所以只要学科非空就是「同一对话里的
+	// 后续提问」；这条对话里到底写没写过系统提示，由网页版客户端自己判断——
+	// 写过的才精简，没写过的仍要带上完整提示。
+	followUp := subject != ""
 	e.mu.Unlock()
 	res, err := client.Chat(ctx, msgs, llm.Options{Subject: subject, FollowUp: followUp, Temperature: 0.3, MaxTokens: 2048, JSON: true})
 	if err != nil {

@@ -5,12 +5,36 @@ import { applyTheme } from './theme.js';
 let S = null;
 let tab = 'model';
 
-const SUBJECTS = ['语文', '数学', '英语', '物理', '化学', '生物', '政治', '历史', '地理', '信息技术', '体育', '音乐', '美术'];
+const BASE_SUBJECTS = ['语文', '数学', '英语', '物理', '化学', '生物', '政治', '历史', '地理', '信息技术', '体育', '音乐', '美术'];
+
+// subjectPool = 内置科目 + ClassIsland 课表里实际出现的科目。
+// 1.2.6 之前只有内置那份，用户课表里叫「大学语文」「语文（阅读）」就永远匹配不上，
+// 自动记录形同关闭。现在直接从课表读，名字一致才可能被监听。
+let subjectPool = BASE_SUBJECTS.slice();
+let subjectSource = '';
+
+async function loadSubjects() {
+  try {
+    // 加超时：探测 ClassIsland 目录要读盘，卡住时不能连带抽屉一起打不开。
+    const d = await Promise.race([
+      api.get('/api/ci/subjects'),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500)),
+    ]);
+    const list = (d.subjects || []).filter(Boolean);
+    subjectSource = d.source || '';
+    const seen = new Set(BASE_SUBJECTS);
+    const extra = list.filter((x) => !seen.has(x));
+    subjectPool = extra.concat(BASE_SUBJECTS);
+  } catch (e) {
+    subjectPool = BASE_SUBJECTS.slice();
+  }
+}
 
 const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
-export function openSettings(state, initialTab) {
+export async function openSettings(state, initialTab) {
   S = state;
+  await loadSubjects();
   $('#drawer').hidden = false;
   $('#drawer-mask').hidden = false;
   $('#drawer-saved').textContent = '';
@@ -121,6 +145,15 @@ function modelTab(cfg) {
           <button class="btn small" id="f-webcheck">检测</button>
         </div>
       </div>
+
+      <h3>每科一条对话</h3>
+      <div class="desc">同一门课固定用同一条对话：系统提示只在建对话时写一次，之后每页只发本页材料，不用重复发送，模型也能接着前几页讲。对话地址保存在本机，可以自动准备，也可以手动指定网页里已有的对话。</div>
+      <div class="chat-list" id="f-chatlist"><div class="chat-empty">加载中…</div></div>
+      <div class="chat-bar">
+        <button class="btn small" id="f-chatprime">自动准备对话</button>
+        <button class="btn small ghost" id="f-chatreset">全部重建</button>
+      </div>
+      <label class="check"><input type="checkbox" id="f-noprime" ${cfg.webAI.noPrimeOnStart ? 'checked' : ''}> <span>启动时不要自动准备对话</span></label>
     </div>`;
 }
 
@@ -182,13 +215,18 @@ function captureTab(cfg) {
 
 function lessonTab(cfg) {
   const l = cfg.lesson;
-  const chips = SUBJECTS.map((s) =>
+  // 已经在监听但不在科目池里的（手填的旧配置）也要显示出来，否则用户没法取消。
+  const known = new Set(subjectPool);
+  const extra = (l.subjects || []).filter((x) => x && !known.has(x));
+  const chips = extra.concat(subjectPool).map((s) =>
     `<button class="chip-toggle ${l.subjects.includes(s) ? 'on' : ''}" data-subject="${esc(s)}">${esc(s)}</button>`).join('');
   const tt = (l.manualTimetable || [])
     .map((e) => `${WEEK[e.weekday]} ${e.start}-${e.end} ${e.subject}`).join('\n');
   return `
     <h3>监听的学科</h3>
-    <div class="desc">只有在这些学科的课表时段，才会自动开始记录。默认只监听语文课。</div>
+    <div class="desc">${subjectSource === 'classisland'
+      ? '下面这些科目来自 ClassIsland 的课表，勾选后只在这些课时段自动记录。'
+      : '没有读到 ClassIsland 课表，显示的是常见科目。可在「集成」里指定 ClassIsland 目录。'}</div>
     <div class="subject-chips" id="f-subjects">${chips}</div>
 
     <h3>行为</h3>
@@ -841,6 +879,7 @@ function bindTab(name) {
         $('#f-webstatus').textContent = d.message;
       } catch (e) { $('#f-webstatus').textContent = e.message; }
     });
+    bindChats();
   }
 
   if (name === 'asr') {
@@ -1013,6 +1052,8 @@ function readTab(name) {
     cfg.provider.vision = chk('#f-vision');
     cfg.webAI.url = val('#f-weburl') || cfg.webAI.url;
     cfg.webAI.headless = chk('#f-headless');
+    cfg.webAI.noPrimeOnStart = chk('#f-noprime');
+    if (!cfg.webAI.chatMode) cfg.webAI.chatMode = 'per-subject';
   }
   if (name === 'asr') {
     cfg.asr.mode = val('#f-asrmode') || cfg.asr.mode;
@@ -1065,4 +1106,112 @@ function readTab(name) {
     const d = $('#f-density');
     if (d) cfg.ui.density = d.value;
   }
+}
+
+/* ---------------- 网页版对话管理 ---------------- */
+
+// 把对话地址缩成「域名/末段」，界面上够看就行。
+function shortChat(u) {
+  if (!u) return '';
+  try {
+    const x = new URL(u);
+    const seg = x.pathname.split('/').filter(Boolean).pop() || '';
+    return x.hostname + (seg ? '/' + (seg.length > 10 ? seg.slice(0, 6) + '…' : seg) : '');
+  } catch (e) { return u.slice(0, 40); }
+}
+
+function bindChats() {
+  const box = $('#f-chatlist');
+  if (!box) return;
+  loadChats();
+  $('#f-chatprime')?.addEventListener('click', () => primeChats(false));
+  $('#f-chatreset')?.addEventListener('click', () => primeChats(true));
+  box.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('button[data-act]');
+    if (!btn) return;
+    const row = btn.closest('.chat-row');
+    const subject = row?.dataset.subject || '';
+    if (!subject) return;
+    if (btn.dataset.act === 'edit') {
+      const cur = row.dataset.url || '';
+      const url = prompt(`把「${subject}」在网页版里的对话地址粘进来（留空表示清除）：`, cur);
+      if (url === null) return;
+      try {
+        await api.post('/api/webai/chats/set', { subject, url: url.trim() });
+        toast(url.trim() ? '已指定对话地址' : '已清除', 'ok');
+        loadChats();
+      } catch (e) { toast('保存失败：' + e.message, 'err'); }
+    }
+    if (btn.dataset.act === 'clear') {
+      try {
+        await api.post('/api/webai/chats/set', { subject, clear: true });
+        toast('已清除，下次会重新准备', 'ok');
+        loadChats();
+      } catch (e) { toast(e.message, 'err'); }
+    }
+  });
+}
+
+async function loadChats() {
+  const box = $('#f-chatlist');
+  if (!box) return;
+  let d;
+  try {
+    d = await api.get('/api/webai/chats');
+  } catch (e) {
+    box.innerHTML = `<div class="chat-empty">读取失败：${esc(e.message)}</div>`;
+    return;
+  }
+  if (!d.ok) {
+    box.innerHTML = `<div class="chat-empty">${esc(d.hint || '当前不使用网页版 AI')}</div>`;
+    return;
+  }
+  const chats = d.chats || [];
+  const map = new Map(chats.map((c) => [c.subject, c]));
+  const names = [];
+  const seen = new Set();
+  const push = (x) => { if (x && !seen.has(x)) { seen.add(x); names.push(x); } };
+  (d.subjects || []).forEach(push);
+  chats.forEach((c) => push(c.subject));
+
+  if (!names.length) {
+    box.innerHTML = '<div class="chat-empty">还没有要监听的科目。先到「课堂」页勾选学科。</div>';
+    return;
+  }
+  box.innerHTML = names.map((name) => {
+    const c = map.get(name);
+    const state = !c ? '未准备'
+      : (c.primed ? '提示词已写入' : '待写入提示词') + (c.sessions ? ` · 已记 ${c.sessions} 页` : '');
+    const src = !c ? '' : ({ prewarm: '自动新建', sidebar: '侧边栏识别', manual: '手动指定', runtime: '使用中记录' }[c.source] || '');
+    return `<div class="chat-row" data-subject="${esc(name)}" data-url="${esc(c?.url || '')}">
+      <div class="chat-main"><b>${esc(name)}</b><span>${c ? esc(shortChat(c.url)) : '—'}</span></div>
+      <div class="chat-meta">${esc(state)}${src ? ' · ' + esc(src) : ''}</div>
+      <div class="chat-ops">
+        <button class="btn mini" data-act="edit">指定地址</button>
+        <button class="btn mini ghost" data-act="clear" ${c ? '' : 'disabled'}>清除</button>
+      </div>
+    </div>`;
+  }).join('');
+  if (d.busy) box.insertAdjacentHTML('afterbegin', '<div class="chat-empty">正在准备对话，浏览器会在后台跑一会儿…</div>');
+}
+
+async function primeChats(force) {
+  try {
+    const d = await api.post('/api/webai/prime', { force });
+    toast(`开始为 ${(d.subjects || []).length} 门课准备对话`, 'ok');
+    const tick = async (n) => {
+      const st = await api.get('/api/webai/chats').catch(() => null);
+      if (!st) return;
+      loadChats();
+      if (st.busy && n > 0) { setTimeout(() => tick(n - 1), 3000); return; }
+      if (!st.busy) {
+        const last = st.last || [];
+        const bad = last.filter((x) => x.action === 'failed');
+        if (bad.length) toast(`${bad.length} 门课没准备好：${bad[0].message || ''}`, 'warn');
+        else toast('对话已准备好', 'ok');
+        loadChats();
+      }
+    };
+    setTimeout(() => tick(60), 1500);
+  } catch (e) { toast(e.message, 'err'); }
 }

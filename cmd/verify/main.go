@@ -411,6 +411,63 @@ func main() {
 		return fmt.Sprintf("%d 个快速添加渠道", len(d.Presets)), nil
 	})
 
+	c.check("课表科目读取", func() (string, error) {
+		var d struct {
+			Subjects []string `json:"subjects"`
+			Source   string   `json:"source"`
+			State    struct {
+				InClass bool   `json:"inClass"`
+				Subject string `json:"subject"`
+			} `json:"state"`
+		}
+		if err := c.getJSON("/api/ci/subjects", &d); err != nil {
+			return "", err
+		}
+		if d.Source == "off" {
+			return "课表联动已关闭（不影响其他功能）", nil
+		}
+		if d.Source == "none" {
+			return "", fmt.Errorf("没读到 ClassIsland 课表，请在「集成」里指定数据目录")
+		}
+		if len(d.Subjects) == 0 {
+			return "", fmt.Errorf("课表里没有科目（来源 %s）", d.Source)
+		}
+		return fmt.Sprintf("%d 个科目 · 来源 %s", len(d.Subjects), d.Source), nil
+	})
+
+	c.check("网页版对话配置", func() (string, error) {
+		var d struct {
+			OK    bool   `json:"ok"`
+			Mode  string `json:"mode"`
+			Hint  string `json:"hint"`
+			Chats []struct {
+				Subject string `json:"subject"`
+				URL     string `json:"url"`
+				Primed  bool   `json:"primed"`
+			} `json:"chats"`
+			Subjects []string `json:"subjects"`
+		}
+		if err := c.getJSON("/api/webai/chats", &d); err != nil {
+			return "", err
+		}
+		if !d.OK {
+			return "使用 API 模型，无需管理对话", nil
+		}
+		ready := 0
+		for _, ch := range d.Chats {
+			if ch.Primed && ch.URL != "" {
+				ready++
+			}
+		}
+		if len(d.Subjects) == 0 {
+			return "还没有要监听的科目", nil
+		}
+		if ready == 0 {
+			return "", fmt.Errorf("有 %d 门课要监听，但还没有一条对话准备好（到设置里点「自动准备对话」）", len(d.Subjects))
+		}
+		return fmt.Sprintf("%d/%d 门课已固定对话", ready, len(d.Subjects)), nil
+	})
+
 	if *full {
 		fmt.Println("模式：完整（含大模型调用，耗时较长）")
 	} else {

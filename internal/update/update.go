@@ -258,22 +258,43 @@ func unzip(src, dst string) error {
 }
 
 // newer 判断 a 是否比 b 新（语义化版本 x.y.z）。
+// newer 判断 a 是否比 b 新。
+//
+// 按段比较，段数不限：1.2.6 之前写死成 3 段，于是 1.2.6.1 和 1.2.6 被判成
+// 「同一版本」，发出去的补丁版用户永远收不到更新提示。
 func newer(a, b string) bool {
 	pa, pb := splitVer(a), splitVer(b)
-	for i := 0; i < 3; i++ {
-		if pa[i] != pb[i] {
-			return pa[i] > pb[i]
+	n := len(pa)
+	if len(pb) > n {
+		n = len(pb)
+	}
+	for i := 0; i < n; i++ {
+		var va, vb int
+		if i < len(pa) {
+			va = pa[i]
+		}
+		if i < len(pb) {
+			vb = pb[i]
+		}
+		if va != vb {
+			return va > vb
 		}
 	}
 	return false
 }
 
-func splitVer(v string) [3]int {
-	var out [3]int
+// splitVer 把 "v1.2.6.1-beta" 拆成 [1 2 6 1]。
+// 遇到非数字段就停下，避免把 "beta" 当成 0 段。
+func splitVer(v string) []int {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
 	parts := strings.FieldsFunc(v, func(r rune) bool { return r == '.' || r == '-' || r == '+' })
-	for i := 0; i < 3 && i < len(parts); i++ {
-		n, _ := strconv.Atoi(parts[i])
-		out[i] = n
+	out := make([]int, 0, len(parts))
+	for _, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			break
+		}
+		out = append(out, n)
 	}
 	return out
 }

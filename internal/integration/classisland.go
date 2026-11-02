@@ -221,14 +221,31 @@ func (p *ClassIslandProvider) DataDir() string {
 		}
 	}
 	candidates := []string{}
+	// 显式指定优先：便携版、绿色版、或者装在非标准目录时全靠它。
+	if env := strings.TrimSpace(os.Getenv("CLASSISLAND_DATA_DIR")); env != "" {
+		candidates = append(candidates, env)
+	}
 	if appData := os.Getenv("APPDATA"); appData != "" {
-		candidates = append(candidates, filepath.Join(appData, "ClassIsland", "data"), filepath.Join(appData, "ClassIsland"))
+		candidates = append(candidates,
+			filepath.Join(appData, "ClassIsland", "data"),
+			filepath.Join(appData, "ClassIsland"))
 	}
 	if local := os.Getenv("LOCALAPPDATA"); local != "" {
-		candidates = append(candidates, filepath.Join(local, "ClassIsland", "data"))
+		candidates = append(candidates,
+			filepath.Join(local, "ClassIsland", "data"),
+			filepath.Join(local, "ClassIsland"),
+			// ClassIsland 2.x 把配置放在 Local 下的包目录里。
+			filepath.Join(local, "ClassIsland.App", "data"))
+	}
+	if home := os.Getenv("USERPROFILE"); home != "" {
+		candidates = append(candidates,
+			filepath.Join(home, "ClassIsland", "data"),
+			filepath.Join(home, "Documents", "ClassIsland", "data"))
 	}
 	if wd, err := os.Getwd(); err == nil {
-		candidates = append(candidates, filepath.Join(wd, "data"))
+		candidates = append(candidates,
+			filepath.Join(wd, "data"),
+			filepath.Join(filepath.Dir(wd), "data"))
 	}
 	for _, c := range candidates {
 		if st, err := os.Stat(filepath.Join(c, "Profiles")); err == nil && st.IsDir() {
@@ -364,10 +381,11 @@ func (p *ClassIslandProvider) compute(now time.Time) ClassState {
 		st.Plugin = true
 		st.Detected = true
 		st.Running = true
-		st.InClass = ps.InClass
-		st.Preparing = ps.Preparing
 		st.Source = "plugin"
-		st.Current = nil
+		// 插件能拿到 ClassIsland 的实时状态（临时调课、提前下课），
+		// 但它说「不在上课」时不能反过来把课表算出来的结论抹掉：
+		// 插件刚启动、ClassIsland 正在切课的那几秒都会误报 false。
+		// 所以只在插件说「在课」时采信，说「不在课」时保留课表结果。
 		if ps.InClass && ps.Subject != "" {
 			l := Lesson{Subject: ps.Subject}
 			if t, ok := parseClock(now, ps.Start); ok {
@@ -376,20 +394,24 @@ func (p *ClassIslandProvider) compute(now time.Time) ClassState {
 			if t, ok := parseClock(now, ps.End); ok {
 				l.End = t
 			}
+			st.InClass = true
+			st.Preparing = false
 			st.Current = &l
-		}
-		st.Next = nil
-		if !ps.InClass && ps.Next != "" {
+			st.Next = nil
+			st.Hint = ""
+		} else if ps.Next != "" && st.Current == nil {
 			l := Lesson{Subject: ps.Next}
 			if t, ok := parseClock(now, ps.NextStart); ok {
 				l.Start = t
 			}
+			st.Preparing = ps.Preparing
 			st.Next = &l
+			st.Hint = ""
 		}
 		if ps.ClassName != "" {
-			st.Profile = ps.ClassName + "（注入）"
+			// 班级名单独放，别覆盖课表档案名——两者含义不同。
+			st.Hint = ps.ClassName
 		}
-		st.Hint = ""
 	}
 	st.Monitored = p.monitored(st.Current)
 	return st
@@ -401,15 +423,128 @@ func weekdayHint(now time.Time) string {
 	return names[int(now.Weekday())] + "没有排课"
 }
 
+// normSubject 归一化学科名：去空白、去括号注记、全角转半角。
+//
+// ClassIsland 里同一个学科可能出现「语文」「语文（阅读）」「语文 A」几种写法，
+// 用户填的监听列表又往往是「语文」。原来的双向 strings.Contains 在
+// 「语文」vs「语」这种短名上会误匹配，所以先归一化再分档比较。
+func normSubject(s string) string {
+	s = strings.TrimSpace(s)
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'Ａ' && r <= 'Ｚ':
+			b.WriteRune(r - 0xFEE0)
+		case r >= 'ａ' && r <= 'ｚ':
+			b.WriteRune(r - 0xFEE0)
+		case r == '（' || r == '(' || r == '【' || r == '[':
+			// 括号之后是注记，整段丢掉。
+			return b.String()
+		case r == ' ' || r == '\u3000' || r == '	':
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// SubjectNames 返回 ClassIsland 课表里出现过的全部科目名。
+// 设置页用它做多选，用户不必再手打学科名——打错一个字就永远监听不到课。
+func (p *ClassIslandProvider) SubjectNames() []string {
+	p.mu.RLock()
+	pf := p.profile
+	enabled := p.cfg.Enabled
+	manual := append([]config.TimetableEntry(nil), p.manual...)
+	p.mu.RUnlock()
+	if !enabled {
+		return nil
+	}
+	if pf == nil {
+		p.mu.Lock()
+		p.loadProfile()
+		pf = p.profile
+		p.mu.Unlock()
+	}
+	out := make([]string, 0, 16)
+	seen := map[string]bool{}
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		k := normSubject(name)
+		if k == "" || seen[k] {
+			return
+		}
+		seen[k] = true
+		out = append(out, name)
+	}
+	if pf != nil {
+		ids := make([]string, 0, len(pf.Subjects))
+		for id := range pf.Subjects {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			add(pf.Subjects[id].Name)
+		}
+	}
+	for _, e := range manual {
+		add(e.Subject)
+	}
+	// 插件实时上报的科目也带上：临时课表可能不在 profile 里。
+	if st, ok := p.pluginSnapshot(); ok {
+		add(st.Subject)
+		add(st.Next)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SubjectSource 说明科目列表是从哪来的。
+func (p *ClassIslandProvider) SubjectSource() string {
+	p.mu.RLock()
+	enabled, ok, path, nman := p.cfg.Enabled, p.loadedOK, p.profPath, len(p.manual)
+	p.mu.RUnlock()
+	switch {
+	case !enabled:
+		return "off"
+	case ok && path != "":
+		return "classisland"
+	case nman > 0:
+		return "manual"
+	}
+	return "none"
+}
+
 func (p *ClassIslandProvider) monitored(l *Lesson) bool {
 	if l == nil {
 		return false
 	}
-	if len(p.subjects) == 0 {
+	p.mu.RLock()
+	subjects := append([]string(nil), p.subjects...)
+	p.mu.RUnlock()
+	if len(subjects) == 0 {
 		return false
 	}
-	for _, s := range p.subjects {
-		if strings.Contains(l.Subject, s) || strings.Contains(s, l.Subject) {
+	target := normSubject(l.Subject)
+	if target == "" {
+		return false
+	}
+	// 第一轮：归一化后完全相等，最可靠。
+	for _, s := range subjects {
+		if normSubject(s) == target {
+			return true
+		}
+	}
+	// 第二轮：一方包含另一方，但短的一方至少两个字，
+	// 避免把「语」配到「英语」这类单字误判。
+	for _, s := range subjects {
+		n := normSubject(s)
+		if len([]rune(n)) < 2 || len([]rune(target)) < 2 {
+			continue
+		}
+		if strings.Contains(target, n) || strings.Contains(n, target) {
 			return true
 		}
 	}
