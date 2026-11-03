@@ -105,7 +105,7 @@ func TestSmokeCoreRoutes(t *testing.T) {
 		t.Fatalf("timetable 异常：%d", code)
 	}
 	// 静态资源必须能取到，否则页面白屏。
-	for _, p := range []string{"/assets/js/app.js", "/assets/css/dsh.css", "/assets/js/shell.js", "/assets/js/agent.js"} {
+	for _, p := range []string{"/assets/js/app.js", "/assets/css/dsh.css", "/assets/js/shell.js", "/assets/js/agent.js", "/assets/js/update.js"} {
 		if code, _, _ := call(t, s, "GET", p, nil); code != 200 {
 			t.Fatalf("静态资源 %s 取不到：%d", p, code)
 		}
@@ -396,5 +396,75 @@ func TestSmokeASRModels(t *testing.T) {
 	}
 	if _, ok := m["ready"]; !ok {
 		t.Fatalf("状态里缺 ready：%v", m)
+	}
+}
+
+// TestSmokeUpdateChannel 覆盖更新通道的边界：
+// 状态、节点表、取消的幂等性，以及「只允许安装下载目录里的包」这条闸。
+// 真正的下载与安装需要网络和运行中的 exe，不放在单元测试里。
+func TestSmokeUpdateChannel(t *testing.T) {
+	s := newSmokeServer(t)
+
+	code, m, body := call(t, s, "GET", "/api/update/status", nil)
+	if code != 200 {
+		t.Fatalf("状态接口异常：%d %s", code, body)
+	}
+	task, _ := m["task"].(map[string]any)
+	if task == nil || task["state"] != "idle" {
+		t.Fatalf("初始任务状态应为 idle：%v", m["task"])
+	}
+	if dir, _ := m["dir"].(string); !strings.HasSuffix(filepath.ToSlash(dir), "/data/updates") {
+		t.Fatalf("更新目录不对：%q", dir)
+	}
+	if _, ok := m["last"]; ok {
+		t.Fatalf("干净环境下不该有上次升级结果：%v", m["last"])
+	}
+
+	// 不强制测速时只返回候选表，不应发起任何网络请求。
+	code, m, body = call(t, s, "POST", "/api/update/nodes", map[string]any{"url": "", "force": false})
+	if code != 200 {
+		t.Fatalf("节点接口异常：%d %s", code, body)
+	}
+	nodes, _ := m["nodes"].([]any)
+	if len(nodes) < 2 {
+		t.Fatalf("候选节点太少：%v", m["nodes"])
+	}
+	var hasDirect bool
+	for _, it := range nodes {
+		n := it.(map[string]any)
+		if n["prefix"] == "" {
+			hasDirect = true
+		}
+	}
+	if !hasDirect {
+		t.Fatal("候选里应有直连选项")
+	}
+
+	// 缺地址、越界路径、不存在的包：都要在动文件之前挡住。
+	if code, _, _ := call(t, s, "POST", "/api/update/download", map[string]any{}); code != 400 {
+		t.Fatalf("缺下载地址应 400，实际 %d", code)
+	}
+	if code, _, _ := call(t, s, "POST", "/api/update/apply", map[string]any{}); code != 400 {
+		t.Fatalf("缺 path 应 400，实际 %d", code)
+	}
+	if code, _, _ := call(t, s, "POST", "/api/update/apply", map[string]any{
+		"path": filepath.Join(s.paths.Root, "evil.zip"),
+	}); code != 400 {
+		t.Fatalf("目录外的包应 400，实际 %d", code)
+	}
+	outside := filepath.Join(s.paths.Root, "data", "updates", "..", "..", "evil.zip")
+	if code, _, _ := call(t, s, "POST", "/api/update/apply", map[string]any{"path": outside}); code != 400 {
+		t.Fatalf("../ 穿越应 400，实际 %d", code)
+	}
+	missing := filepath.Join(s.paths.Root, "data", "updates", "nope.zip")
+	if code, _, _ := call(t, s, "POST", "/api/update/apply", map[string]any{"path": missing}); code != 400 {
+		t.Fatalf("不存在的包应 400，实际 %d", code)
+	}
+
+	// 取消要幂等：没有任务在跑时点两下也不该报错。
+	for i := 0; i < 2; i++ {
+		if code, _, body := call(t, s, "POST", "/api/update/cancel", nil); code != 200 {
+			t.Fatalf("第 %d 次取消失败：%d %s", i+1, code, body)
+		}
 	}
 }

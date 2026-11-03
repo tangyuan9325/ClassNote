@@ -32,6 +32,7 @@ import (
 	"classnote/internal/plugin"
 	"classnote/internal/store"
 	"classnote/internal/theme"
+	"classnote/internal/update"
 )
 
 // Server 是本地应用服务。
@@ -71,6 +72,17 @@ type Server struct {
 	approveMu sync.Mutex
 	approvals map[string]chan bool
 	agentBusy atomic.Bool
+
+	// 更新包下载器（惰性：status 这类轻请求不该触发网络动作）
+	updOnce sync.Once
+	updDl   *update.Downloader
+	// applying 保证同一时刻只有一个安装流程；装到一半再点一次会写坏目录
+	applying atomic.Bool
+
+	// 退出钩子：main 注入后由 handleShutdown / 更新安装调用，
+	// 以便顺带停掉 whisper-server、DSH 与托盘图标
+	exitMu sync.Mutex
+	exitFn func()
 }
 
 // New 创建服务。
@@ -184,7 +196,10 @@ func (s *Server) routes() {
 	m.HandleFunc("/api/notify/test", s.handleNotifyTest)
 	m.HandleFunc("/api/notify/presets", s.handleNotifyPresets)
 	m.HandleFunc("/api/update/check", s.handleUpdateCheck)
+	m.HandleFunc("/api/update/status", s.handleUpdateStatus)
+	m.HandleFunc("/api/update/nodes", s.handleUpdateNodes)
 	m.HandleFunc("/api/update/download", s.handleUpdateDownload)
+	m.HandleFunc("/api/update/cancel", s.handleUpdateCancel)
 	m.HandleFunc("/api/update/apply", s.handleUpdateApply)
 	m.HandleFunc("/api/themes", s.handleThemesList)
 	m.HandleFunc("/api/themes/save", s.handleThemeSave)
@@ -564,10 +579,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleShutdown(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true})
-	go func() {
-		time.Sleep(300 * time.Millisecond)
-		os.Exit(0)
-	}()
+	s.requestExit(300 * time.Millisecond)
 }
 
 func (s *Server) absReport(p string) string {

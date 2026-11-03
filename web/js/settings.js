@@ -3,6 +3,7 @@ import { $, $$, el, toast, esc } from './util.js';
 import { applyTheme } from './theme.js';
 import { applyUiStyle } from './shell.js';
 import { asrModelsHtml, loadASRModels, onASRProgress } from './asrmodels.js';
+import { updatePanelHtml, bindUpdate } from './update.js';
 
 let S = null;
 let tab = 'model';
@@ -818,28 +819,7 @@ function aboutTab(cfg) {
     <div class="kv"><span>工作目录</span><b>${esc(a.paths.root)}</b></div>
     <div class="kv"><span>课堂记录</span><b>${esc(a.paths.sessions)}</b></div>
     <div class="kv"><span>报告输出</span><b>${esc(a.paths.reports)}</b></div>
-    <h3>更新</h3>
-    <div class="field">
-      <label>GitHub 仓库</label>
-      <input id="f-repo" value="${esc((cfg.github && cfg.github.repo) || '')}" placeholder="owner/name">
-      <div class="desc">用于检查新版本。仓库需包含 GitHub Release。</div>
-    </div>
-    <div class="field">
-      <label>GitHub Token（可选，私有仓库需要）</label>
-      <input id="f-ghtoken" type="password" value="${esc((cfg.github && cfg.github.token) || '')}" placeholder="ghp_...">
-    </div>
-    <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
-      <button class="btn small" id="btn-update-check">检查更新</button>
-      <label class="switch"><input type="checkbox" id="f-checkupdates" ${cfg.github && cfg.github.checkUpdates ? 'checked' : ''}><i></i></label>
-      <span class="hint">启动时自动检查</span>
-    </div>
-    <div class="test-result" id="update-result" hidden></div>
-    <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px" id="update-actions" hidden>
-      <button class="btn small primary" id="btn-update-download">下载更新包</button>
-      <button class="btn small primary" id="btn-update-apply" hidden>安装并重启</button>
-      <button class="btn small" id="btn-update-page">打开发布页</button>
-      <span class="hint" id="update-progress"></span>
-    </div>
+    ${updatePanelHtml(cfg)}
     <h3>维护</h3>
     <div style="display:flex;gap:6px;flex-wrap:wrap">
       <button class="btn small" data-open="data">打开数据目录</button>
@@ -860,58 +840,7 @@ function bindTab(name) {
   if (name === 'appearance') { bindAppearance(); return; }
   if (name === 'agent') { bindAgent(); return; }
   if (name === 'about') {
-    $('#f-repo')?.addEventListener('change', (e) => { cfg.github.repo = e.target.value.trim(); saveConfig(); });
-    $('#f-ghtoken')?.addEventListener('change', (e) => { cfg.github.token = e.target.value.trim(); saveConfig(); });
-    $('#f-checkupdates')?.addEventListener('change', (e) => { cfg.github.checkUpdates = e.target.checked; saveConfig(); });
-    let updateInfo = null;
-    let downloadedPath = '';
-    $('#btn-update-check')?.addEventListener('click', async () => {
-      const box = $('#update-result');
-      box.hidden = false;
-      box.className = 'test-result';
-      box.textContent = '检查中…';
-      $('#update-actions').hidden = true;
-      try {
-        const d = await api.get('/api/update/check');
-        updateInfo = d;
-        if (d.error) {
-          box.className = 'test-result err';
-          box.textContent = d.error;
-        } else if (d.hasUpdate) {
-          box.className = 'test-result ok';
-          box.textContent = `发现新版本 ${d.latest}（当前 ${d.current}）${d.notes ? '\n' + d.notes.slice(0, 300) : ''}`;
-          $('#update-actions').hidden = false;
-          $('#btn-update-apply').hidden = true;
-          $('#update-progress').textContent = '';
-          if (d.url) $('#btn-update-page').onclick = () => window.open(d.url, '_blank');
-        } else {
-          box.className = 'test-result ok';
-          box.textContent = `已是最新（${d.current}）`;
-        }
-      } catch (e) { box.className = 'test-result err'; box.textContent = e.message; }
-    });
-    $('#btn-update-download')?.addEventListener('click', async () => {
-      const prog = $('#update-progress');
-      prog.textContent = '下载中…';
-      try {
-        const asset = (updateInfo?.assets || []).find((a) => /\.zip$/i.test(a.name)) || (updateInfo?.assets || [])[0];
-        if (!asset) throw new Error('Release 里没有可下载的附件');
-        const d = await api.post('/api/update/download', { url: asset.url, name: asset.name });
-        downloadedPath = d.path;
-        prog.textContent = '已下载：' + asset.name;
-        $('#btn-update-apply').hidden = false;
-      } catch (e) { prog.textContent = '下载失败：' + e.message; }
-    });
-    $('#btn-update-apply')?.addEventListener('click', async () => {
-      if (!downloadedPath) return;
-      if (!confirm('将退出程序并安装更新，完成后自动重启。继续吗？')) return;
-      const prog = $('#update-progress');
-      prog.textContent = '正在准备升级…';
-      try {
-        await api.post('/api/update/apply', { path: downloadedPath });
-        document.body.innerHTML = '<div style="padding:60px;font-family:sans-serif;color:#666">正在升级 ClassNote…完成后会自动重新打开。</div>';
-      } catch (e) { prog.textContent = '升级失败：' + e.message; }
-    });
+    bindUpdate(cfg);
   }
   if (name === 'model') {
     $$('#s-mode .seg-item').forEach((b) => b.addEventListener('click', () => {

@@ -43,7 +43,7 @@ export function connectEvents(handlers) {
   }
   const types = ['session', 'session_ended', 'slide', 'transcript', 'analysis', 'segment_status',
     'report', 'error', 'class_state', 'auto_start', 'auto_stop', 'icc', 'classisland', 'test',
-    'ui_command', 'dsh_log'];
+    'ui_command', 'dsh_log', 'asr_model', 'update_progress'];
   for (const t of types) {
     es.addEventListener(t, (ev) => {
       let payload = {};

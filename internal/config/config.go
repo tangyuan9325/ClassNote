@@ -38,6 +38,55 @@ type GitHubConfig struct {
 	Repo         string `json:"repo"`
 	Token        string `json:"token,omitempty"`
 	CheckUpdates bool   `json:"checkUpdates"`
+
+	// Mirror 是加速节点的选择：auto（默认，运行时测速）/ off（只用直连）/ 节点 ID
+	Mirror string `json:"mirror,omitempty"`
+	// Mirrors 是用户自定义的加速前缀，最多 5 条，和内置节点一起测速
+	Mirrors []string `json:"mirrors,omitempty"`
+	// SpeedTestOff 关掉自动测速。用反向开关是为了让旧配置（没有这个字段，
+	// 零值 false）默认就是「测速开着」——不然升级上来的用户会静默失去加速。
+	SpeedTestOff bool `json:"speedTestOff,omitempty"`
+	// LastNode 是上次测速选中的节点，下次优先复用，省掉十秒等待
+	LastNode string `json:"lastNode,omitempty"`
+}
+
+// normalizeGitHub 清理更新相关的用户输入。
+//
+// 这些字段会直接拼进下载地址，必须在这里挡住奇怪的值：
+// 一个带空格或斜杠的「节点 ID」会让测速永远匹配不上，而一个
+// 非 https 的自定义前缀等于把更新包交给明文链路。
+func normalizeGitHub(g *GitHubConfig) {
+	g.Mirror = strings.TrimSpace(g.Mirror)
+	if g.Mirror != "" && g.Mirror != "auto" && g.Mirror != "off" {
+		if len(g.Mirror) > 32 || strings.ContainsAny(g.Mirror, " \t\r\n/\\") {
+			g.Mirror = "" // 形状不对就回落自动，别让一个坏值卡死下载
+		}
+	}
+	g.LastNode = strings.TrimSpace(g.LastNode)
+	if len(g.LastNode) > 32 || strings.ContainsAny(g.LastNode, " \t\r\n/\\") {
+		g.LastNode = ""
+	}
+
+	out := make([]string, 0, len(g.Mirrors))
+	seen := map[string]bool{}
+	for _, raw := range g.Mirrors {
+		p := strings.TrimSpace(raw)
+		if p == "" || !strings.HasPrefix(p, "https://") {
+			continue // 只放行 https
+		}
+		if !strings.HasSuffix(p, "/") {
+			p += "/"
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+		if len(out) == 5 {
+			break
+		}
+	}
+	g.Mirrors = out
 }
 
 // NotifyConfig 控制机器人通知。
@@ -357,6 +406,7 @@ func (c *Config) normalize() {
 	if c.GitHub.Repo == "" {
 		c.GitHub.Repo = "tangyuan9325/ClassNote"
 	}
+	normalizeGitHub(&c.GitHub)
 	if c.ASR.Mode == "" {
 		c.ASR.Mode = "local"
 	}

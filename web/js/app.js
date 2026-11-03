@@ -8,6 +8,7 @@ import { applyUiStyle, mountShell, loadRailSessions, markActiveSession, renderSl
 import { initAgent, loadAgentInfo, refreshAgentContext, renderAgentPage as renderAgentPageImpl, askAgent as askAgentImpl, agentEvent } from './agent.js';
 import { initDsh, appendDshLog } from './dsh.js';
 import { onASRProgress } from './asrmodels.js';
+import { onUpdateProgress } from './update.js';
 
 export const S = {
   boot: null,
@@ -761,6 +762,8 @@ const handlers = {
   dsh_log(data) { appendDshLog(data); },
   // 语音模型的下载进度：设置页会用到，其它页面忽略。
   asr_model(data) { onASRProgress(data); },
+  // 更新包下载进度：设置页「关于」标签里的进度条靠它推进。
+  update_progress(data) { onUpdateProgress(data); },
   session(data) {
     S.session = data;
     S.live = true;

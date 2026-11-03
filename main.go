@@ -35,7 +35,7 @@ import (
 var webAssets embed.FS
 
 var (
-	version   = "1.8.1"
+	version   = "1.8.2"
 	buildTime = "dev"
 )
 
@@ -43,6 +43,12 @@ var (
 const windowTitle = "ClassNote · 课记"
 
 func main() {
+	// 辅助升级进程：主程序把自己复制成 updater-*.exe，再带这个参数启动它。
+	// 必须在 flag.Parse 之前拦下，否则它会因为不认识这个参数而直接退出。
+	if plan, ok := update.IsUpdater(os.Args[1:]); ok {
+		os.Exit(update.RunUpdater(plan))
+	}
+
 	port := flag.Int("port", 41735, "本地服务起始端口")
 	noWindow := flag.Bool("no-window", false, "只启动服务，不打开应用窗口")
 	noTray := flag.Bool("no-tray", false, "不显示系统托盘图标")
@@ -205,12 +211,12 @@ func main() {
 		return "已开始记录：" + subject
 	}
 
-	quit := func() {
-		if !app.AskQuit(0, engine.Status().Running) {
-			return
-		}
+	// forceQuit 不做二次确认：调用它的两条路径（升级安装、/api/shutdown）
+	// 已经各自确认过了。它替代 os.Exit，顺带停掉托盘、语音服务与 DSH——
+	// 直接 Exit 会把 whisper-server 留在机器上占着端口，下次启动就抢不到。
+	forceQuit := func(reason string) {
 		shutdownOnce.Do(func() {
-			logx.Infof("main", "用户请求退出")
+			logx.Infof("main", "退出程序：%s", reason)
 			if tray != nil {
 				tray.Stop()
 			}
@@ -227,6 +233,13 @@ func main() {
 			srv.Shutdown()
 			os.Exit(0)
 		})
+	}
+
+	quit := func() {
+		if !app.AskQuit(0, engine.Status().Running) {
+			return
+		}
+		forceQuit("用户请求退出")
 	}
 
 	if !*noTray {
@@ -259,6 +272,29 @@ func main() {
 				}()
 			}
 		}
+	}
+
+	// 关闭接口与升级安装共用同一条退出路径：都会走到 forceQuit。
+	srv.SetExitHook(func() { forceQuit("升级或关闭接口") })
+
+	// 上一次升级的结果：成功就报个平安，失败就把原因摆出来。
+	// 越过这一步，用户对「点了安装之后程序消失又出现」只会觉得莫名其妙。
+	if res, ok := update.LastResult(paths.Root); ok && time.Since(res.At) < 6*time.Hour {
+		go func() {
+			time.Sleep(2 * time.Second)
+			if tray == nil {
+				return
+			}
+			if res.OK {
+				msg := fmt.Sprintf("已更新到 %s", res.To)
+				if !res.Restarted {
+					msg += "，请手动重新打开"
+				}
+				tray.Notify("更新完成", msg)
+				return
+			}
+			tray.Notify("上次更新失败", res.Error+"（已恢复到旧版本）")
+		}()
 	}
 
 	if !*noWindow {

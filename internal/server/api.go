@@ -27,7 +27,6 @@ import (
 	"classnote/internal/plugin"
 	"classnote/internal/store"
 	"classnote/internal/theme"
-	"classnote/internal/update"
 )
 
 // Theme 是界面主题描述。
@@ -722,53 +721,6 @@ func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 // handleNotifyPresets 返回内置通知渠道模板。
 func (s *Server) handleNotifyPresets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"presets": notify.Presets()})
-}
-
-// handleUpdateCheck 检查 GitHub 上是否有新版本。
-func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
-	g := s.cfg.Get().GitHub
-	writeJSON(w, update.Check(g.Repo, g.Token))
-}
-
-// handleUpdateDownload 下载最新 Release 附件到本地。
-func (s *Server) handleUpdateDownload(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		URL  string `json:"url"`
-		Name string `json:"name"`
-	}
-	if err := readJSON(r, &body); err != nil {
-		writeErr(w, 400, err)
-		return
-	}
-	g := s.cfg.Get().GitHub
-	dest := filepath.Join(s.paths.Root, "data", "updates")
-	path, err := update.Download(body.URL, dest, body.Name, g.Token)
-	if err != nil {
-		writeErr(w, 500, err)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "path": path})
-}
-
-// handleUpdateApply 解压下载的更新包并启动替换脚本（随后退出程序完成升级）。
-func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Path string `json:"path"`
-	}
-	if err := readJSON(r, &body); err != nil || body.Path == "" {
-		writeErr(w, 400, fmt.Errorf("缺少 path"))
-		return
-	}
-	if err := update.Apply(body.Path, s.paths.Root); err != nil {
-		writeErr(w, 500, err)
-		return
-	}
-	writeJSON(w, map[string]any{"ok": true, "message": "升级脚本已启动，程序即将退出并完成替换"})
-	// 给响应留出发送时间，再退出主进程
-	go func() {
-		time.Sleep(800 * time.Millisecond)
-		os.Exit(0)
-	}()
 }
 
 // handleThemesList 列出内置与自定义主题。

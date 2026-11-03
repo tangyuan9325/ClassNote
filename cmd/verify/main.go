@@ -331,6 +331,55 @@ func main() {
 		return "已是最新 " + d.Current, nil
 	})
 
+	// 加速节点表：不测速，只看候选是否齐全、ID 有没有重复。
+	// 连通性由「检查更新」那次请求顺带验证，这里不该再打一轮网络。
+	c.check("加速节点表", func() (string, error) {
+		var d struct {
+			Nodes []struct {
+				ID     string `json:"id"`
+				Name   string `json:"name"`
+				Prefix string `json:"prefix"`
+				OK     bool   `json:"ok"`
+			} `json:"nodes"`
+			LastNode     string `json:"lastNode"`
+			SpeedTestOff bool   `json:"speedTestOff"`
+		}
+		if err := c.getJSON("/api/update/check", &d); err != nil {
+			return "", err
+		}
+		if len(d.Nodes) < 2 {
+			return "", fmt.Errorf("候选节点只有 %d 个", len(d.Nodes))
+		}
+		ids := map[string]bool{}
+		hasDirect := false
+		best := "未测速"
+		for _, n := range d.Nodes {
+			if n.ID == "" || ids[n.ID] {
+				return "", fmt.Errorf("节点 ID 重复或为空：%q", n.ID)
+			}
+			ids[n.ID] = true
+			if n.Prefix == "" {
+				hasDirect = true
+			}
+			if n.OK && best == "未测速" {
+				best = n.Name
+			}
+		}
+		if !hasDirect {
+			return "", fmt.Errorf("候选里没有直连选项")
+		}
+		mode := "自动测速"
+		if d.SpeedTestOff {
+			mode = "已关闭自动测速"
+		}
+		last := d.LastNode
+		if last == "" {
+			last = "—"
+		}
+		return fmt.Sprintf("%d 个候选 · %s · 上次 %s · 本次最快 %s",
+			len(d.Nodes), mode, last, best), nil
+	})
+
 	c.check("市场与一键更新", func() (string, error) {
 		var m struct {
 			OK     bool `json:"ok"`
@@ -1291,6 +1340,55 @@ func main() {
 			return fmt.Sprintf("发现新版本 %s（当前 %s）", d.Latest, d.Current), nil
 		}
 		return "已是最新 " + d.Current, nil
+	})
+
+	// 加速节点表：不测速，只看候选是否齐全、ID 有没有重复。
+	// 连通性由「检查更新」那次请求顺带验证，这里不该再打一轮网络。
+	c.check("加速节点表", func() (string, error) {
+		var d struct {
+			Nodes []struct {
+				ID     string `json:"id"`
+				Name   string `json:"name"`
+				Prefix string `json:"prefix"`
+				OK     bool   `json:"ok"`
+			} `json:"nodes"`
+			LastNode     string `json:"lastNode"`
+			SpeedTestOff bool   `json:"speedTestOff"`
+		}
+		if err := c.getJSON("/api/update/check", &d); err != nil {
+			return "", err
+		}
+		if len(d.Nodes) < 2 {
+			return "", fmt.Errorf("候选节点只有 %d 个", len(d.Nodes))
+		}
+		ids := map[string]bool{}
+		hasDirect := false
+		best := "未测速"
+		for _, n := range d.Nodes {
+			if n.ID == "" || ids[n.ID] {
+				return "", fmt.Errorf("节点 ID 重复或为空：%q", n.ID)
+			}
+			ids[n.ID] = true
+			if n.Prefix == "" {
+				hasDirect = true
+			}
+			if n.OK && best == "未测速" {
+				best = n.Name
+			}
+		}
+		if !hasDirect {
+			return "", fmt.Errorf("候选里没有直连选项")
+		}
+		mode := "自动测速"
+		if d.SpeedTestOff {
+			mode = "已关闭自动测速"
+		}
+		last := d.LastNode
+		if last == "" {
+			last = "—"
+		}
+		return fmt.Sprintf("%d 个候选 · %s · 上次 %s · 本次最快 %s",
+			len(d.Nodes), mode, last, best), nil
 	})
 
 	c.check("市场与一键更新", func() (string, error) {
