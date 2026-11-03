@@ -155,4 +155,6 @@ func (s *Server) Shutdown() {
 	if s.dsh != nil {
 		s.dsh.Stop()
 	}
+	// 语音服务同理：whisper-server 是独立进程，不跟着退就会占着端口。
+	s.ASRShutdown()
 }

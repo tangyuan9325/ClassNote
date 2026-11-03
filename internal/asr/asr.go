@@ -138,8 +138,8 @@ func (t *Transcriber) transcribeLocal(ctx context.Context, wav []byte) (string, 
 	if t.cfg.LocalPort > 0 && LocalHealth(t.cfg.LocalPort) {
 		return LocalTranscribe(ctx, t.cfg.LocalPort, wav, t.cfg.Language)
 	}
-	if localSrv != nil && localSrv.Alive() {
-		return LocalTranscribe(ctx, localSrv.Port(), wav, t.cfg.Language)
+	if s := runningLocal(); s != nil && s.Alive() {
+		return LocalTranscribe(ctx, s.Port(), wav, t.cfg.Language)
 	}
 	// 回退到 whisper-cli（每段重新加载模型，慢，但不依赖服务）。
 	dir, err := os.MkdirTemp("", "cn-asr-*")

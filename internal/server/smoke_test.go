@@ -341,3 +341,60 @@ func TestSmokeDSHRuntime(t *testing.T) {
 		t.Fatalf("停止应幂等，实际 %d", code)
 	}
 }
+
+// TestSmokeASRModels 覆盖语音模型接口。
+//
+// 不在测试里真下 60 MB：只断言清单齐全、边界被挡、状态可读。
+// 真实下载由 internal/asrmodel 的单测与联调覆盖。
+func TestSmokeASRModels(t *testing.T) {
+	s := newSmokeServer(t)
+
+	code, m, _ := call(t, s, "GET", "/api/asr/models", nil)
+	if code != 200 {
+		t.Fatalf("模型清单接口异常：%d", code)
+	}
+	list, _ := m["models"].([]any)
+	if len(list) < 3 {
+		t.Fatalf("模型太少：%v", m["models"])
+	}
+	for _, it := range list {
+		row := it.(map[string]any)
+		for _, k := range []string{"id", "file", "name", "size", "sha256", "quality", "speed"} {
+			if _, ok := row[k]; !ok {
+				t.Fatalf("模型条目缺字段 %s：%v", k, row)
+			}
+		}
+		if sz, _ := row["size"].(float64); sz <= 0 {
+			t.Fatalf("模型体积异常：%v", row)
+		}
+	}
+	if m["default"] != "base_q5_1" {
+		t.Fatalf("默认模型应为 base_q5_1，实际 %v", m["default"])
+	}
+
+	// 空 / 未知 ID 必须 400。
+	if code, _, _ := call(t, s, "POST", "/api/asr/models/download", map[string]any{}); code != 400 {
+		t.Fatalf("空 ID 应 400，实际 %d", code)
+	}
+	if code, _, _ := call(t, s, "POST", "/api/asr/models/download", map[string]any{"id": "no-such"}); code != 400 {
+		t.Fatalf("未知 ID 应 400，实际 %d", code)
+	}
+	// 只有 https 的下载源才收。
+	if code, _, _ := call(t, s, "POST", "/api/asr/models/download", map[string]any{
+		"id": "tiny_q5_1", "mirror": "file:///etc/passwd",
+	}); code != 400 {
+		t.Fatalf("非 https 源应 400，实际 %d", code)
+	}
+	if code, _, _ := call(t, s, "POST", "/api/asr/models/delete", map[string]any{"id": "nope"}); code != 400 {
+		t.Fatalf("删除未知模型应 400，实际 %d", code)
+	}
+
+	// 顶部状态条接口。
+	code, m, _ = call(t, s, "GET", "/api/asr/status", nil)
+	if code != 200 {
+		t.Fatalf("状态接口异常：%d", code)
+	}
+	if _, ok := m["ready"]; !ok {
+		t.Fatalf("状态里缺 ready：%v", m)
+	}
+}

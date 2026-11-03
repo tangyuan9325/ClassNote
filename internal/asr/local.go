@@ -161,8 +161,15 @@ func LocalModels(dir string) []string {
 	return out
 }
 
-// StartLocal 启动 whisper-server（若已在运行则复用）。
+// StartLocal 启动 whisper-server（若已在运行则复用），按中文识别。
 func StartLocal(dir, model string, port int) (*LocalServer, error) {
+	return StartLocalLang(dir, model, port, "zh")
+}
+
+// StartLocalLang 启动 whisper-server，可指定识别语言。
+//
+// 早先这里把 -l zh 写死了，英语课、日语课上会被强行转成汉字。
+func StartLocalLang(dir, model string, port int, lang string) (*LocalServer, error) {
 	localMu.Lock()
 	defer localMu.Unlock()
 	if localSrv != nil && localSrv.Alive() {
@@ -207,7 +214,7 @@ func StartLocal(dir, model string, port int) (*LocalServer, error) {
 	}
 	cmd := exec.Command(exe,
 		"-m", model,
-		"-l", "zh",
+		"-l", normalizeLang(lang),
 		"-t", strconv.Itoa(threads),
 		"--port", strconv.Itoa(port),
 		"--host", "127.0.0.1",
@@ -281,7 +288,60 @@ func (s *LocalServer) Stop() {
 	if s.cmd != nil && s.cmd.Process != nil {
 		_ = s.cmd.Process.Kill()
 	}
+	// 全局单例也要一起清掉，否则下次 StartLocal 会「复用」一个死掉的实例。
+	localMu.Lock()
+	if localSrv == s {
+		localSrv = nil
+	}
+	localMu.Unlock()
+}
+
+// RestartLocal 换模型：停掉旧进程，用新模型重新起一个。
+//
+// 模型在 whisper-server 启动时就加载进内存，换文件必须重启。
+func RestartLocal(dir, model string, port int, lang string) (*LocalServer, error) {
+	localMu.Lock()
+	old := localSrv
 	localSrv = nil
+	localMu.Unlock()
+	if old != nil {
+		old.Stop()
+	}
+	if port <= 0 {
+		port = 18095
+	}
+	// 等旧进程真正退出。Windows 释放端口有一小段延迟，
+	// 不等的话新进程 bind 失败，表现就是「换完模型没声音了」。
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if !LocalHealth(port) {
+			break
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	if LocalHealth(port) {
+		return nil, fmt.Errorf("旧语音服务没能停下来（端口 %d 仍被占用）", port)
+	}
+	return StartLocalLang(dir, model, port, lang)
+}
+
+// normalizeLang 把配置里的语言代码映射成 whisper.cpp 认的写法。
+func normalizeLang(lang string) string {
+	l := strings.ToLower(strings.TrimSpace(lang))
+	switch l {
+	case "", "zh", "zh-cn", "zh-hans", "cn", "chinese", "中文":
+		return "zh"
+	case "auto", "detect":
+		return "auto"
+	}
+	return l
+}
+
+// runningLocal 加锁读取全局实例，避免与 RestartLocal 打架。
+func runningLocal() *LocalServer {
+	localMu.Lock()
+	defer localMu.Unlock()
+	return localSrv
 }
 
 // LocalHealth 探测 whisper-server 是否可用。
@@ -344,3 +404,6 @@ func LocalTranscribe(ctx context.Context, port int, wav []byte, language string)
 	}
 	return strings.TrimSpace(out.Text), nil
 }
+
+// RunningServer 返回当前运行中的 whisper-server，没有则返回 nil。
+func RunningServer() *LocalServer { return runningLocal() }

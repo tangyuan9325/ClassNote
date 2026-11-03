@@ -2,6 +2,7 @@ import { api } from './api.js';
 import { $, $$, el, toast, esc } from './util.js';
 import { applyTheme } from './theme.js';
 import { applyUiStyle } from './shell.js';
+import { asrModelsHtml, loadASRModels, onASRProgress } from './asrmodels.js';
 
 let S = null;
 let tab = 'model';
@@ -161,34 +162,44 @@ function modelTab(cfg) {
 function asrTab(cfg) {
   const a = cfg.asr;
   return `
-    <div class="desc">语音转写使用 OpenAI 兼容的 transcriptions 接口（SiliconFlow、OpenAI、Groq 等），也支持本地 whisper.cpp。</div>
+    <div class="desc">语音转写有两种做法：<b>本地 whisper.cpp</b>（默认，不联网、不要钱，模型按需下载）与 <b>OpenAI 兼容接口</b>（更快更准，按量计费）。</div>
     <label class="field"><span>转写方式</span>
       <select id="f-asrmode">
-        <option value="api" ${a.mode === 'api' ? 'selected' : ''}>接口转写</option>
-        <option value="local" ${a.mode === 'local' ? 'selected' : ''}>本地 whisper.cpp</option>
+        <option value="local" ${a.mode !== 'api' && a.mode !== 'off' ? 'selected' : ''}>本地 whisper.cpp</option>
+        <option value="api" ${a.mode === 'api' ? 'selected' : ''}>接口转写（OpenAI 兼容）</option>
         <option value="off" ${a.mode === 'off' ? 'selected' : ''}>关闭（只记幻灯片）</option>
       </select>
     </label>
+
+    <div id="f-asr-local" ${a.mode === 'api' || a.mode === 'off' ? 'hidden' : ''}>
+      ${asrModelsHtml()}
+    </div>
+
     <div id="f-asr-api" ${a.mode !== 'api' ? 'hidden' : ''}>
       <div class="field-row two">
-        <label class="field"><span>Base URL</span><input id="f-asrbase" value="${esc(a.baseURL)}"></label>
-        <label class="field"><span>模型</span><input id="f-asrmodel" value="${esc(a.model)}"></label>
+        <label class="field"><span>Base URL</span><input id="f-asrbase" value="${esc(a.baseURL)}" placeholder="https://api.siliconflow.cn/v1"></label>
+        <label class="field"><span>模型</span><input id="f-asrmodel" value="${esc(a.model)}" placeholder="FunAudioLLM/SenseVoiceSmall"></label>
       </div>
       <label class="field"><span>API Key</span><input id="f-asrkey" type="password" value="${esc(a.apiKey)}" autocomplete="off"></label>
+      <div class="desc">任何兼容 <code>/audio/transcriptions</code> 的服务都能用：OpenAI、SiliconFlow、Groq、DeepInfra 等。留空 Key 时会退回本地模型。</div>
     </div>
-    <div id="f-asr-local" ${a.mode !== 'local' ? 'hidden' : ''}>
-      <label class="field"><span>whisper.cpp 可执行文件</span><input id="f-asexe" value="${esc(a.localExe)}" placeholder="C:\\whisper\\main.exe"></label>
-      <label class="field"><span>模型文件 (.bin)</span><input id="f-asmodel" value="${esc(a.localModel)}" placeholder="ggml-medium.bin"></label>
-    </div>
+
     <div class="field-row two">
-      <label class="field"><span>语言</span><input id="f-aslang" value="${esc(a.language)}" placeholder="zh"></label>
+      <label class="field"><span>识别语言</span>
+        <select id="f-aslang">
+          <option value="zh" ${(a.language || 'zh') === 'zh' ? 'selected' : ''}>中文（默认）</option>
+          <option value="en" ${a.language === 'en' ? 'selected' : ''}>英语</option>
+          <option value="ja" ${a.language === 'ja' ? 'selected' : ''}>日语</option>
+          <option value="auto" ${a.language === 'auto' ? 'selected' : ''}>自动检测</option>
+        </select>
+      </label>
       <label class="field"><span>每批最长（秒）</span><input id="f-aschunk" type="number" min="3" max="30" value="${a.chunkSec}" title="超过长度时把最后一句留给下一批"></label>
     </div>
     <div class="field-row two">
       <label class="field"><span>静音断句（毫秒）</span><input id="f-assil" type="number" min="200" max="3000" step="50" value="${a.silenceMs}"></label>
       <label class="field"><span>语音阈值</span><input id="f-asth" type="number" min="0.002" max="0.2" step="0.002" value="${a.threshold}"></label>
     </div>
-    <div class="desc">超过批次长度时，会回溯到最近一次句间停顿，把最后一句留到下一批，再送当前批次转写。阈值越低越灵敏；教室噪声大时可适当提高。录音设备留空使用系统默认。</div>
+    <div class="desc">超过批次长度时，会回溯到最近一次句间停顿，把最后一句留到下一批，再送当前批次转写。阈值越低越灵敏；教室噪声大时可适当提高。</div>
     <button class="btn" id="f-mictest">检测麦克风（2.5 秒）</button>
     <div class="test-result" id="f-mic-result" hidden></div>`;
 }
@@ -963,7 +974,12 @@ function bindTab(name) {
     $('#f-asrmode')?.addEventListener('change', (e) => {
       cfg.asr.mode = e.target.value;
       $('#f-asr-api').hidden = e.target.value !== 'api';
-      $('#f-asr-local').hidden = e.target.value !== 'local';
+      $('#f-asr-local').hidden = e.target.value === 'api' || e.target.value === 'off';
+      if (e.target.value !== 'api') loadASRModels();
+    });
+    loadASRModels();
+    $('#f-asrmirror')?.addEventListener('change', (e) => {
+      cfg.asr.mirror = e.target.value;
     });
     $('#f-mictest')?.addEventListener('click', async () => {
       const box = $('#f-mic-result');
@@ -1138,9 +1154,9 @@ function readTab(name) {
     cfg.asr.model = val('#f-asrmodel') || cfg.asr.model;
     const k = val('#f-asrkey');
     if (k && !k.startsWith('•')) cfg.asr.apiKey = k;
-    cfg.asr.localExe = val('#f-asexe');
-    cfg.asr.localModel = val('#f-asmodel');
     cfg.asr.language = val('#f-aslang') || 'zh';
+    const mir = val('#f-asrmirror');
+    if (mir !== undefined && mir !== null) cfg.asr.mirror = mir;
     const chunk = parseInt(val('#f-aschunk'), 10); if (!Number.isNaN(chunk)) cfg.asr.chunkSec = chunk;
     const sil = parseInt(val('#f-assil'), 10); if (!Number.isNaN(sil)) cfg.asr.silenceMs = sil;
     const th = parseFloat(val('#f-asth')); if (!Number.isNaN(th)) cfg.asr.threshold = th;

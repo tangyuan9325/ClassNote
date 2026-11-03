@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -113,6 +114,8 @@ type ASRConfig struct {
 	LocalExe   string  `json:"localExe"`
 	LocalModel string  `json:"localModel"`
 	LocalPort  int     `json:"localPort"`  // 本地 whisper-server 端口（0 = 默认 18095）
+	Mirror     string  `json:"mirror"`     // 模型下载源（空 = 自动：国内镜像优先）
+	AutoModel  bool    `json:"autoModel"`  // 首次运行自动下载轻量模型
 	ChunkSec   int     `json:"chunkSec"`   // 单段最长秒数
 	SilenceMS  int     `json:"silenceMs"`  // 静音判定时长
 	Threshold  float64 `json:"threshold"`  // 0-1 能量阈值
@@ -248,7 +251,7 @@ func Default() Config {
 			ChatMode:     "per-subject",
 		},
 		ASR: ASRConfig{
-			Mode:       "api",
+			Mode:       "local",
 			BaseURL:    "https://api.siliconflow.cn/v1",
 			Model:      "FunAudioLLM/SenseVoiceSmall",
 			Language:   "zh",
@@ -359,6 +362,10 @@ func (c *Config) normalize() {
 	}
 	if c.ASR.LocalPort == 0 {
 		c.ASR.LocalPort = 18095
+	}
+	c.ASR.Mirror = strings.TrimSpace(c.ASR.Mirror)
+	if c.ASR.Mirror != "" && !strings.HasPrefix(c.ASR.Mirror, "https://") {
+		c.ASR.Mirror = "" // 只允许 https，别让配置里能写 file:// 或内网地址
 	}
 	if c.ASR.SampleRate == 0 {
 		c.ASR.SampleRate = d.ASR.SampleRate

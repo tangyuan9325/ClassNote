@@ -23,6 +23,20 @@
 
 这两个项目只被**参考设计与公开契约**，没有代码被复制进本仓库。
 
+## 随包分发的第三方二进制
+
+| 组件 | 说明 | 许可 |
+| --- | --- | --- |
+| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | `integrations/whisper/` 下的 `whisper-server.exe`、`whisper-cli.exe`、`whisper-stream.exe`、`whisper.dll`、`ggml*.dll`、`SDL2.dll`（其中 SDL2 为 zlib 许可） | MIT |
+| [whisper 模型](https://huggingface.co/ggerganov/whisper.cpp) | `integrations/whisper/models/ggml-base-q5_1.bin`，由 OpenAI Whisper 权重转换并量化 | MIT（模型权重 MIT，whisper.cpp 仓库同许可） |
+
+whisper.cpp 的版权声明为 Copyright (c) 2023-2024 The ggml authors。
+本项目只调用其可执行文件的标准命令行与 HTTP 接口，未修改其源代码；
+完整许可文本见 <https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE>。
+
+设置页里额外下载的模型（Small / Medium / Large v3 Turbo 等）来自同一仓库，
+许可相同，下载后存放在 `integrations/whisper/models/`。
+
 ## 按需安装的运行时（不分发）
 
 | 组件 | 说明 | 许可 |

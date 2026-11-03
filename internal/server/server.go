@@ -20,6 +20,7 @@ import (
 
 	"classnote/internal/agent"
 	"classnote/internal/appinfo"
+	"classnote/internal/asr"
 	"classnote/internal/config"
 	"classnote/internal/dsh"
 	"classnote/internal/integration"
@@ -55,6 +56,10 @@ type Server struct {
 	ln        net.Listener // 当前监听器；切换局域网开关时需要重绑
 	lnHost    string
 	lnMu      sync.Mutex
+
+	// 语音模型下载器（惰性：只在用到时读目录）
+	asrOnce sync.Once
+	asrMgr  *asr.ModelManager
 
 	// DSH 运行时（按需安装，6 亿字节级别，懒加载）
 	dshOnce sync.Once
@@ -169,6 +174,12 @@ func (s *Server) routes() {
 	m.HandleFunc("/api/logs", s.handleLogs)
 	m.HandleFunc("/api/timetable", s.handleTimetable)
 	m.HandleFunc("/api/asr/mic", s.handleMicTest)
+	m.HandleFunc("/api/asr/models", s.handleASRModels)
+	m.HandleFunc("/api/asr/models/download", s.handleASRDownload)
+	m.HandleFunc("/api/asr/models/cancel", s.handleASRCancel)
+	m.HandleFunc("/api/asr/models/delete", s.handleASRDelete)
+	m.HandleFunc("/api/asr/models/activate", s.handleASRActivate)
+	m.HandleFunc("/api/asr/status", s.handleASRStatus)
 	m.HandleFunc("/api/asr/test", s.handleASRTest)
 	m.HandleFunc("/api/notify/test", s.handleNotifyTest)
 	m.HandleFunc("/api/notify/presets", s.handleNotifyPresets)

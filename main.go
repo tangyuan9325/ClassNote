@@ -35,7 +35,7 @@ import (
 var webAssets embed.FS
 
 var (
-	version   = "1.2.8"
+	version   = "1.8.1"
 	buildTime = "dev"
 )
 
@@ -97,45 +97,16 @@ func main() {
 
 	st := store.New(paths.Sessions)
 	engine := lesson.New(paths, st, cfg)
-	// 本地语音模型：随包分发、启动即用，免安装。
-	// 只要随包带了模型，且没有配置云端密钥，就用本地——老师不需要任何额外安装。
-	{
-		wdir := asr.LocalDefaultDir(paths.Root)
-		// whisper 是 C 程序，读不懂中文路径：必要时部署到纯 ASCII 目录。
-		if asciiDir, err := asr.EnsureASCIIWhisperDir(wdir); err == nil {
-			wdir = asciiDir
-		} else {
-			logx.Warnf("main", "语音模型目录准备失败: %v", err)
-		}
-		hasLocal := len(asr.LocalModels(wdir)) > 0
-		useLocal := cfg.ASR.Mode == "" || cfg.ASR.Mode == "local" ||
-			(cfg.ASR.Mode == "api" && cfg.ASR.APIKey == "")
-		if hasLocal && useLocal {
-			model := cfg.ASR.LocalModel
-			if model == "" {
-				models := asr.LocalModels(wdir)
-				if len(models) > 0 {
-					model = models[0]
-				}
-			}
-			port := cfg.ASR.LocalPort
-			if port == 0 {
-				port = 18095
-			}
-			if _, err := asr.StartLocal(wdir, model, port); err != nil {
-				logx.Warnf("main", "本地语音模型未能启动（%v），语音转写将不可用", err)
-			} else {
-				logx.Infof("main", "本地语音模型已自动启动（%s）", filepath.Base(model))
-				_, _ = cfgStore.Update(func(c *config.Config) error {
-					c.ASR.Mode = "local"
-					c.ASR.LocalModel = model
-					c.ASR.LocalPort = port
-					return nil
-				})
-				engine.Update(cfgStore.Get())
-			}
-		}
+	// 本地语音模型：运行时目录要先定下来（可能是 %ProgramData% 下的
+	// ASCII 副本），下载器与 whisper-server 都得往同一个地方找。
+	// 真正的启动 / 首次下载交给 srv.BootstrapASR()，那里才能推 SSE 进度。
+	wdir := asr.LocalDefaultDir(paths.Root)
+	if asciiDir, err := asr.EnsureASCIIWhisperDir(wdir); err == nil {
+		wdir = asciiDir
+	} else {
+		logx.Warnf("main", "语音模型目录准备失败: %v", err)
 	}
+	asr.SetRuntimeDir(wdir)
 
 	ci := integration.NewClassIsland(cfg.Integ.ClassIsland, cfg.Lesson.Subjects, cfg.Lesson.ManualTimetable)
 	// 首次通过进程探测到 ClassIsland 数据目录后写回配置，
@@ -158,6 +129,8 @@ func main() {
 		os.Exit(1)
 	}
 	srv := server.New(paths, cfgStore, st, engine, ci, icc, sub)
+	// 有模型就直接起服务；没有就后台下载默认轻量模型（不阻塞启动）。
+	go srv.BootstrapASR()
 	if _, cerr := srv.RefreshClient(); cerr != nil {
 		logx.Warnf("main", "模型尚未就绪: %v", cerr)
 	}

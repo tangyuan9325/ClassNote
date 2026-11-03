@@ -7,6 +7,7 @@ import { initStores, renderPlugins, renderThemes } from './store.js';
 import { applyUiStyle, mountShell, loadRailSessions, markActiveSession, renderSlots, renderComposerBar } from './shell.js';
 import { initAgent, loadAgentInfo, refreshAgentContext, renderAgentPage as renderAgentPageImpl, askAgent as askAgentImpl, agentEvent } from './agent.js';
 import { initDsh, appendDshLog } from './dsh.js';
+import { onASRProgress } from './asrmodels.js';
 
 export const S = {
   boot: null,
@@ -758,6 +759,8 @@ export async function saveConfig(silent = false) {
 const handlers = {
   // DSH 运行时的安装/启动日志：只有插件页有对应面板，这里空跑也不报错。
   dsh_log(data) { appendDshLog(data); },
+  // 语音模型的下载进度：设置页会用到，其它页面忽略。
+  asr_model(data) { onASRProgress(data); },
   session(data) {
     S.session = data;
     S.live = true;
