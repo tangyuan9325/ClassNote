@@ -329,9 +329,17 @@
     watchChangelog();
   }
 
-  if (document.readyState === 'complete') {
-    boot();
+  /* 不能等 window.load：线上要拉 5 张截图和 Google Fonts，load 常常拖到
+     十秒以后，按钮会迟迟不出现。DOMContentLoaded 时就挂上去，React 的
+     hydration 只会 patch 自己渲染的子树，不会回收 body 末尾的兄弟节点；
+    万一被回收，load 时再补一次。 */
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot, { once: true });
   } else {
-    window.addEventListener('load', boot, { once: true });
+    boot();
   }
+  window.addEventListener('load', function () {
+    if (!document.querySelector('.skin-wrap')) init();
+    if (!document.querySelector('div.field--ink > div[style*="overflow:auto"]')) watchChangelog();
+  });
 })();
