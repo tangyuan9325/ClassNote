@@ -1,0 +1,846 @@
+/* ==========================================================================
+   ClassNote 官网 · 修复与增强层
+   2026-11 · 与应用同版本 v1.8.3
+
+   为什么单独一层：
+   1) 站点是 Next.js 静态导出，构建产物里的 CSS 在最近一次部署中从 15KB
+      缩到 8KB，Tailwind 工具类和 .field/.headline/.btn--ink 等组件类一起
+      丢了，下载页因此完全跑版。这里把这些类补回来。
+   2) 页面主体大量使用内联 style，移动端适配只能靠 !important 覆盖。
+   3) 主题切换需要覆盖 React 在 documentElement 上写入的内联变量，
+      同样必须走 !important。
+
+   加载顺序：本文件必须在 _next/static/css/*.css 之后。
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. 通用变量
+   -------------------------------------------------------------------------- */
+:root {
+  --sk-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  --sk-hairline: color-mix(in srgb, var(--ink) 13%, transparent);
+  --sk-ease: cubic-bezier(.2, .7, .2, 1);
+  /* 品牌图形（大图标、纸页）的底色；DSH 皮肤会把它压向背景 */
+  --sk-mark: #c96442;
+  /* 更新日志渲染器给列表圆点写的是 var(--field-red)，但这个变量
+     在新版 CSS 里根本不存在，圆点一直是透明的 */
+  --field-red: var(--accent);
+}
+
+/* --------------------------------------------------------------------------
+   2. 补齐缺失的组件类（下载页 / 404 页依赖）
+   -------------------------------------------------------------------------- */
+
+/* 色块容器：新版下载页把三块内容都写成 .field */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: clamp(32px, 5vw, 64px) var(--margin);
+  position: relative;
+}
+
+.field--ink {
+  background: var(--field-2);
+  color: var(--field-2-ink);
+}
+
+.field--mustard {
+  background: var(--field-1);
+  color: var(--field-1-ink);
+}
+
+.field--bone {
+  background: var(--surface);
+  color: var(--ink);
+  border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+.headline {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(26px, 3.4vw, 42px);
+  line-height: 1.04;
+  letter-spacing: -.02em;
+}
+
+/* 深色皮肤下用 --ink 做底会变成一块刺眼的白按钮，改成跟随强调色 */
+.btn--ink {
+  background: color-mix(in srgb, var(--accent) 90%, var(--bg));
+  color: var(--accent-ink);
+}
+.btn--ink:hover {
+  filter: brightness(1.08);
+}
+
+/* 下载页页脚是 .sec，但内容需要纵向贴底（原本依赖 justify-content，
+   而 .sec 不是 flex 容器，所以之前完全不生效） */
+main > footer.sec {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+/* 开场幕布底部标识：HTML 里有 .intro-foot，但从来没有对应样式，
+   一直以裸文本挂在幕布上 */
+.intro-foot {
+  position: absolute;
+  left: 50%;
+  bottom: 42px;
+  transform: translateX(-50%);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: .46em;
+  color: #fff;
+  opacity: .72;
+  pointer-events: none;
+}
+
+/* 更新日志里的 Markdown：容器是内联样式的匿名 div，只能按属性命中 */
+div.field--ink > div[style*="overflow:auto"] {
+  font-size: 14.5px;
+  line-height: 1.78;
+  scrollbar-width: thin;
+}
+div.field--ink > div[style*="overflow:auto"] > :first-child {
+  margin-top: 0;
+}
+div.field--ink > div[style*="overflow:auto"] h1,
+div.field--ink > div[style*="overflow:auto"] h2,
+div.field--ink > div[style*="overflow:auto"] h3 {
+  font-family: var(--font-display);
+  letter-spacing: -.01em;
+  line-height: 1.25;
+  margin: 1.7em 0 .55em;
+}
+div.field--ink > div[style*="overflow:auto"] h1 {
+  font-size: 1.5em;
+  margin-top: .2em;
+}
+div.field--ink > div[style*="overflow:auto"] h2 {
+  font-size: 1.06em;
+  color: var(--accent);
+  padding-top: .9em;
+  border-top: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+}
+div.field--ink > div[style*="overflow:auto"] h3 {
+  font-size: .98em;
+}
+div.field--ink > div[style*="overflow:auto"] p {
+  margin: .7em 0;
+  color: color-mix(in srgb, currentColor 82%, transparent);
+}
+div.field--ink > div[style*="overflow:auto"] ul,
+div.field--ink > div[style*="overflow:auto"] ol {
+  margin: .7em 0;
+  padding-left: 1.15em;
+}
+div.field--ink > div[style*="overflow:auto"] li {
+  margin: .32em 0;
+  color: color-mix(in srgb, currentColor 82%, transparent);
+}
+div.field--ink > div[style*="overflow:auto"] hr {
+  border: 0;
+  height: 1px;
+  margin: 1.6em 0;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+}
+div.field--ink > div[style*="overflow:auto"] a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+div.field--ink > div[style*="overflow:auto"] code {
+  font-family: var(--sk-mono);
+  font-size: .9em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+/* GitHub 匿名接口每小时只有 60 次配额，用超时兜底提示补一句 */
+div.field--ink > div[style*="overflow:auto"] .md-slow {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--accent);
+  border-radius: 3px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  font-size: 13px;
+  line-height: 1.6;
+  color: color-mix(in srgb, currentColor 80%, transparent);
+}
+div.field--ink > div[style*="overflow:auto"] .md-slow a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* JS 把裸露的 GFM 表格语法重建成真表格后，外面包一层可横滑的容器 */
+div.field--ink > div[style*="overflow:auto"] .md-table {
+  margin: 1em 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+div.field--ink > div[style*="overflow:auto"] .md-table table {
+  margin: 0;
+}
+div.field--ink > div[style*="overflow:auto"] table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+  font-size: .93em;
+}
+div.field--ink > div[style*="overflow:auto"] th,
+div.field--ink > div[style*="overflow:auto"] td {
+  text-align: left;
+  vertical-align: top;
+  padding: 9px 10px;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+}
+div.field--ink > div[style*="overflow:auto"] th {
+  font-weight: 600;
+  color: color-mix(in srgb, currentColor 62%, transparent);
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------------------
+   3. 主题
+   四套皮肤只改变量；DSH 两套另外收紧圆角、换发丝线、元信息改等宽。
+   !important 是必需的：React 会在 documentElement 上写内联 --bg/--ink/...
+   -------------------------------------------------------------------------- */
+
+html[data-skin="classic"] {
+  --bg: #1c1c1c !important;
+  --surface: #262626 !important;
+  --ink: #f1f1ef !important;
+  --muted: #9a9b96 !important;
+  --accent: #8fa68e !important;
+  --accent-ink: #1c1c1c !important;
+  --field-1: #c8c5ba !important;
+  --field-1-ink: #1c1c1c !important;
+  --field-2: #22282a !important;
+  --field-2-ink: #f1f1ef !important;
+  --stage: #8fa68e !important;
+  --stage-ink: #1c1c1c !important;
+}
+
+/* 浅色皮肤下品牌图形要变浅：黑字压在饱和锈橙上会糊成一片，
+   压到 52% 混底之后标题可以完整叠在图形上看清 */
+html[data-skin="paper"] {
+  --bg: #f4f1ea !important;
+  --surface: #fbf9f4 !important;
+  --ink: #1f1c19 !important;
+  --muted: #6f6a61 !important;
+  --accent: #b0532e !important;
+  --accent-ink: #fffdf9 !important;
+  --field-1: #ded5c6 !important;
+  --field-1-ink: #1f1c19 !important;
+  --field-2: #e7e1d6 !important;
+  --field-2-ink: #1f1c19 !important;
+  --stage: #b0532e !important;
+  --stage-ink: #fffdf9 !important;
+  --sk-mark: color-mix(in srgb, #c96442 52%, var(--bg));
+}
+
+/* DSH 深色：近黑底、冷绿强调、两级阴影都压薄 */
+html[data-skin="dsh"] {
+  --bg: #0e100f !important;
+  --surface: #161a18 !important;
+  --ink: #e8e7e1 !important;
+  --muted: #868b85 !important;
+  --accent: #7fa88c !important;
+  --accent-ink: #0e100f !important;
+  --field-1: #e8e7e1 !important;
+  --field-1-ink: #0e100f !important;
+  --field-2: #151917 !important;
+  --field-2-ink: #e8e7e1 !important;
+  --stage: #7fa88c !important;
+  --stage-ink: #0e100f !important;
+  --radius: 10px;
+}
+
+/* DSH 浅色：同一套结构关系，换成纸面 */
+html[data-skin="dsh-light"] {
+  --bg: #f2f2ef !important;
+  --surface: #fbfbf9 !important;
+  --ink: #191c1a !important;
+  --muted: #6d726d !important;
+  --accent: #4a7259 !important;
+  --accent-ink: #fbfbf9 !important;
+  --field-1: #e4e6e1 !important;
+  --field-1-ink: #191c1a !important;
+  --field-2: #eaede8 !important;
+  --field-2-ink: #191c1a !important;
+  --stage: #4a7259 !important;
+  --stage-ink: #fbfbf9 !important;
+  --radius: 10px;
+  --sk-mark: color-mix(in srgb, var(--accent) 34%, var(--bg));
+}
+
+/* 浅色皮肤下，把写死的 #333 / #444 换成跟随墨色 */
+html[data-skin="paper"] .frag,
+html[data-skin="dsh-light"] .frag {
+  border-color: var(--sk-hairline);
+}
+html[data-skin="paper"] .frag-row + .frag-row,
+html[data-skin="dsh-light"] .frag-row + .frag-row {
+  border-top-color: var(--sk-hairline);
+}
+html[data-skin="paper"] .slider,
+html[data-skin="paper"] .toggle,
+html[data-skin="dsh-light"] .slider,
+html[data-skin="dsh-light"] .toggle {
+  background: color-mix(in srgb, var(--ink) 24%, transparent);
+}
+
+/* 浅色皮肤下 --field-2 本身就是浅米色，和相邻的 .field--mustard 几乎同色，
+   两块并排就没了层次。更新日志这块保持"深色块"的角色，用墨色反色。 */
+html[data-skin="paper"] .field--ink,
+html[data-skin="dsh-light"] .field--ink {
+  background: var(--ink);
+  color: var(--bg);
+}
+html[data-skin="paper"] .field--ink .small,
+html[data-skin="dsh-light"] .field--ink .small {
+  color: color-mix(in srgb, var(--bg) 72%, transparent);
+}
+
+/* 浅色皮肤：页脚那块反色底要保证仍是大块深色，不能跟着 --ink 变浅 */
+html[data-skin="paper"] .shot-frame,
+html[data-skin="dsh-light"] .shot-frame {
+  border-color: color-mix(in srgb, var(--ink) 14%, transparent);
+}
+
+/* 开场幕布沿用品牌锈橙，浅色下略压暗一点 */
+html[data-skin="paper"] .intro-curtain,
+html[data-skin="dsh-light"] .intro-curtain {
+  background: #a85736;
+}
+
+/* ---- DSH 的结构性差异：不只换色 ---- */
+html[data-skin^="dsh"] .btn {
+  border-radius: 8px;
+}
+html[data-skin^="dsh"] .shot-frame {
+  border: .5px solid var(--sk-hairline);
+  border-radius: 12px;
+  box-shadow: 0 1px 0 0 color-mix(in srgb, var(--ink) 4%, transparent);
+}
+html[data-skin^="dsh"] .shot-frame:hover {
+  box-shadow: 0 18px 44px -22px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+html[data-skin^="dsh"] .shot-bar {
+  background: color-mix(in srgb, var(--surface) 94%, var(--ink));
+  border-bottom: .5px solid var(--sk-hairline);
+  padding: 9px 13px;
+}
+html[data-skin^="dsh"] .shot-bar em,
+html[data-skin^="dsh"] .field dt {
+  font-family: var(--sk-mono);
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+html[data-skin^="dsh"] .glow-btn:hover {
+  box-shadow: 0 10px 30px -10px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+html[data-skin^="dsh"] .field--ink {
+  border-top: .5px solid var(--sk-hairline);
+}
+/* 只给 dsh，不能写 ^="dsh"，否则会把 dsh-light 一起盖掉 */
+html[data-skin="dsh"] {
+  --sk-mark: color-mix(in srgb, var(--accent) 58%, var(--bg));
+}
+html[data-skin^="dsh"] .sec--concrete {
+  border-top: .5px solid var(--sk-hairline);
+  border-bottom: .5px solid var(--sk-hairline);
+}
+html[data-skin^="dsh"] #download .lead,
+html[data-skin^="dsh"] .field--mustard dd {
+  letter-spacing: -.005em;
+}
+/* DSH 里元信息习惯大写+字距，用于页脚与配置表的标签 */
+html[data-skin^="dsh"] footer[aria-label="页脚"] .small {
+  font-family: var(--sk-mono);
+  font-size: 11.5px;
+  letter-spacing: .04em;
+}
+
+/* 品牌图标的颜色写死在 SVG 的 fill 属性里（#C96442 锈橙）。
+   属性选择器可以稳定命中，而 CSS 声明优先于 SVG 的 presentation
+   attribute，所以换皮肤时能一起换掉，不会出现绿按钮配橙图标的撞色。
+   纸上那三条横线用的也是同一个 fill，会跟着变，仍在纸面上，不会消失。
+   注意这里用的是 --sk-mark 而不是 --accent：强调色是给小面积元素用的，
+   直接铺满半屏会过饱和，DSH 下需要把它往底色里压一档。 */
+html[data-skin] svg rect[fill="#C96442"] {
+  fill: var(--sk-mark);
+}
+html[data-skin] svg path[fill="#E4D9CC"] {
+  fill: color-mix(in srgb, var(--sk-mark) 42%, #faf8f4);
+}
+/* DSH 深色下开场幕布换深底，白线描边反而更利落 */
+html[data-skin="dsh"] .intro-curtain {
+  background: #121614;
+}
+
+/* --------------------------------------------------------------------------
+   4. 主题按钮与面板
+   -------------------------------------------------------------------------- */
+
+.theme-toggle {
+  /* React 渲染的原始按钮没有任何样式，裸在左上角压着导航 */
+  display: none !important;
+}
+
+.skin-btn {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 90;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: .5px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  color: var(--ink);
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  backdrop-filter: blur(14px) saturate(1.3);
+  box-shadow: 0 8px 26px -12px rgba(0, 0, 0, .55);
+  transition: transform .2s var(--sk-ease), border-color .2s ease,
+    box-shadow .2s ease;
+}
+.skin-btn:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  box-shadow: 0 14px 34px -12px rgba(0, 0, 0, .6);
+}
+.skin-btn:active {
+  transform: none;
+}
+.skin-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.skin-btn[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+}
+
+.skin-panel {
+  position: fixed;
+  right: 20px;
+  bottom: 76px;
+  z-index: 90;
+  width: 268px;
+  padding: 10px;
+  border-radius: 16px;
+  border: .5px solid color-mix(in srgb, var(--ink) 16%, transparent);
+  background: color-mix(in srgb, var(--surface) 96%, var(--bg));
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(20px) saturate(1.4);
+  box-shadow: 0 26px 64px -20px rgba(0, 0, 0, .62),
+    0 2px 6px -2px rgba(0, 0, 0, .3);
+  opacity: 0;
+  transform: translateY(10px) scale(.97);
+  transform-origin: 100% 100%;
+  pointer-events: none;
+  transition: opacity .18s ease, transform .18s var(--sk-ease);
+}
+.skin-panel[data-open="true"] {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.skin-title {
+  font-family: var(--sk-mono);
+  font-size: 10px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 6px 10px 10px;
+}
+
+.skin-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 46px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--ink);
+  font-family: var(--font-text);
+  font-size: 14px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s ease;
+}
+.skin-item:hover {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+.skin-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.skin-item[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.skin-dots {
+  display: flex;
+  flex: none;
+}
+.skin-dots i {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  margin-left: -4px;
+  /* 深色圆点压在深色面板上必须靠描边才看得见，
+     所以描边颜色跟着墨色走，而不是写死黑色 */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 30%, transparent);
+}
+.skin-dots i:first-child {
+  margin-left: 0;
+}
+
+.skin-name {
+  font-weight: 600;
+}
+
+.skin-sub {
+  display: block;
+  font-family: var(--sk-mono);
+  font-size: 10.5px;
+  letter-spacing: .04em;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.skin-check {
+  margin-left: auto;
+  flex: none;
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+.skin-item[aria-pressed="true"] .skin-check {
+  opacity: 1;
+}
+
+/* --------------------------------------------------------------------------
+   5. 桌面端细节修正
+   -------------------------------------------------------------------------- */
+
+/* 主标题在 720px 宽、104px 字号下，第二行 8 个字放不下，"记"会孤零零掉到
+   第三行。放宽到 780px 并把字号上限收到 92px（8 × 92 = 736，正好放得下） */
+main > section[aria-label="ClassNote 首页"] h1 {
+  font-size: clamp(44px, 6.4vw, 92px) !important;
+  letter-spacing: -.035em !important;
+  /* 标题右端会压到装饰大图标上（设计上是有意的层次），
+     加一层极淡的投影，保证白字压在锈橙上仍然立得住 */
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .05), 0 10px 36px rgba(0, 0, 0, .22);
+}
+/* 大图标右移一档，把标题末尾两字让出来 */
+main > section[aria-label="ClassNote 首页"] > div[aria-hidden="true"] {
+  right: -9vw !important;
+}
+main > section[aria-label="ClassNote 首页"] .stag-1 {
+  max-width: 780px !important;
+}
+
+/* 首屏图标：容器是 clamp(120px,18vw,220px)，但内联 SVG 写死 width=220，
+   窄屏下容器只有 120px，SVG 会以原始尺寸溢出 100px 并盖住下面的标题。
+   让 SVG 跟随容器缩放。装饰大图标同理。 */
+main > section[aria-label="ClassNote 首页"] .hover-pop > svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+main > section[aria-label="ClassNote 首页"] > div[aria-hidden="true"] > svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* 截图窗口标题 11.5px 在手机上是全文最小字号，抬到 12px */
+.shot-bar em {
+  font-size: 12px;
+  letter-spacing: .045em;
+}
+
+/* 页脚里 github 长地址用 break-all 会把 tangyuan9325 从中间劈开，
+   改用 overflow-wrap 让它在 <wbr> 处断 */
+main > footer.sec .display {
+  word-break: normal !important;
+  overflow-wrap: break-word;
+}
+
+/* 页脚右下角的绿色 CTA 块里有个箭头，正好落在浮动主题按钮下面，让开 */
+footer[aria-label="页脚"] > a > svg {
+  right: 74px !important;
+}
+
+/* 焦点样式统一 */
+.skin-btn:focus-visible,
+.skin-item:focus-visible,
+.btn:focus-visible,
+.link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* --------------------------------------------------------------------------
+   6. 响应式
+   -------------------------------------------------------------------------- */
+
+/* 平板竖屏及以下：功能区块开始收成单栏 */
+@media (max-width: 900px) {
+
+  /* 6.1 功能展示：原来是 1.15fr / 1fr 两栏，手机上图片只剩 155px 宽，
+         文字被压成三四个字一行。改成单栏，图在上、文在下 */
+  main > section[aria-label="功能展示"] .rise {
+    grid-template-columns: 1fr !important;
+    direction: ltr !important;
+    gap: 18px !important;
+  }
+  main > section[aria-label="功能展示"] > div {
+    gap: 56px !important;
+  }
+  main > section[aria-label="功能展示"] {
+    padding-top: 64px !important;
+    padding-bottom: 64px !important;
+  }
+  main > section[aria-label="功能展示"] > p {
+    margin-bottom: 44px !important;
+  }
+  main > section[aria-label="功能展示"] .shot-frame {
+    border-radius: 12px;
+  }
+
+  /* 6.2 原话 / 成稿对比：左右两栏改上下，分隔线从竖线改横线 */
+  main > section[aria-label="原话与成稿"] .rise {
+    grid-template-columns: 1fr !important;
+  }
+  main > section[aria-label="原话与成稿"] .rise > div {
+    padding: 20px !important;
+  }
+  main > section[aria-label="原话与成稿"] .rise > div:nth-child(2) {
+    border-left: 0 !important;
+    border-top: 1px solid rgba(128, 128, 128, .28) !important;
+  }
+  main > section[aria-label="原话与成稿"] pre {
+    font-size: 13px !important;
+    max-height: 42svh;
+    overflow: auto;
+  }
+
+  /* 6.3 页脚：12 栏在 390px 下每栏只有 30px，文字被挤成一列竖排。
+         改为两栏，主要色块通栏 */
+  footer[aria-label="页脚"] {
+    grid-template-columns: 1fr 1fr !important;
+  }
+  footer[aria-label="页脚"] > * {
+    grid-column: span 1 !important;
+    min-height: 132px !important;
+    padding: 18px !important;
+  }
+  footer[aria-label="页脚"] > div:nth-child(1),
+  footer[aria-label="页脚"] > div:nth-child(4),
+  footer[aria-label="页脚"] > div:nth-child(5),
+  footer[aria-label="页脚"] > a {
+    grid-column: 1 / -1 !important;
+  }
+  footer[aria-label="页脚"] > div:nth-child(5),
+  footer[aria-label="页脚"] > a {
+    min-height: 176px !important;
+  }
+  footer[aria-label="页脚"] > div:nth-child(1) {
+    min-height: 108px !important;
+  }
+  footer[aria-label="页脚"] > div:nth-child(5) .display {
+    font-size: clamp(44px, 13vw, 76px) !important;
+  }
+
+  /* 6.4 首屏：标题 48px 时"定义你的课堂笔记"8 个字要 384px，超出 350px 可用宽 */
+  main > section[aria-label="ClassNote 首页"] .stag-1 {
+    max-width: none !important;
+    padding-top: 88px !important;
+  }
+  /* 100svh 在平板上会留下接近半屏的空白，收一档 */
+  main > section[aria-label="ClassNote 首页"] {
+    min-height: 86svh !important;
+  }
+  main > section[aria-label="ClassNote 首页"] h1 {
+    font-size: clamp(32px, 9vw, 52px) !important;
+    line-height: 1.04 !important;
+  }
+  main > section[aria-label="ClassNote 首页"] .lead {
+    font-size: 16px !important;
+    margin-top: 20px !important;
+  }
+  /* 装饰大图标在窄屏上没有立足之地：768 下它会横穿整段正文，
+     390 下即使压到 8% 也只是一块发灰的色斑。直接去掉，留白更干净。 */
+  main > section[aria-label="ClassNote 首页"] > div[aria-hidden="true"] {
+    display: none !important;
+  }
+  /* 图标按 clamp 下限只有 120px，在手机上偏小，给到 148px */
+  main > section[aria-label="ClassNote 首页"] .hover-pop {
+    width: 148px !important;
+    height: 148px !important;
+    margin-bottom: 22px !important;
+  }
+  main > section[aria-label="ClassNote 首页"] .scroll-hint {
+    bottom: 20px !important;
+  }
+
+  /* 6.5 统一节奏与点击区域 */
+  .sec {
+    padding-top: clamp(52px, 9vh, 84px);
+    padding-bottom: clamp(52px, 9vh, 84px);
+  }
+  .topbar {
+    top: 18px;
+  }
+  .topbar-links {
+    gap: 20px;
+  }
+  .wordmark {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 4px 0;
+  }
+  .topbar-links a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 4px 0;
+  }
+  .topbar-links a.link,
+  footer[aria-label="页脚"] a.link {
+    border-bottom: 0;
+    padding-bottom: 0;
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 5px;
+  }
+  footer[aria-label="页脚"] li a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+  /* 页脚里的文字链接（项目仓库、回首页）同样要够到 44px */
+  footer[aria-label="页脚"] > div a,
+  main > footer.sec a.small {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  /* 6.6 下载页 */
+  .field {
+    padding: 32px 20px;
+  }
+  main > section > div.field {
+    min-height: auto !important;
+  }
+  main > section[style*="70svh"] {
+    min-height: auto !important;
+  }
+  div.field--ink > div[style*="overflow:auto"] {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  /* 长表格在窄屏需要能横滑，直接压缩会把中文挤成竖排 */
+  div.field--ink > div[style*="overflow:auto"] table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+  div.field--ink > div[style*="overflow:auto"] th {
+    white-space: nowrap;
+  }
+  /* 上面那条是为了防止裸文本表格被压成竖排；JS 重建出来的真表格
+     交给外层 .md-table 横滑，单元格正常换行 */
+  div.field--ink > div[style*="overflow:auto"] .md-table table {
+    display: table;
+    white-space: normal;
+  }
+  div.field--ink > div[style*="overflow:auto"] .md-table td,
+  div.field--ink > div[style*="overflow:auto"] .md-table th {
+    min-width: 120px;
+  }
+  main > footer.sec .display {
+    font-size: clamp(22px, 6.6vw, 44px) !important;
+    border-bottom-width: 3px !important;
+  }
+  main > section[style*="72svh"] {
+    min-height: 58svh;
+  }
+
+  /* 6.7 主题按钮：避开安全区 */
+  .skin-btn {
+    right: 14px;
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    width: 44px;
+    height: 44px;
+  }
+  .skin-panel {
+    right: 14px;
+    bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+    width: min(280px, calc(100vw - 28px));
+  }
+}
+
+/* 小屏手机再收一档 */
+@media (max-width: 420px) {
+  main > section[aria-label="功能展示"] h3 {
+    font-size: 24px !important;
+  }
+  footer[aria-label="页脚"] > * {
+    min-height: 120px !important;
+    padding: 16px !important;
+  }
+  .skin-item {
+    min-height: 48px;
+  }
+}
+
+/* 横屏手机：首屏内容会被压得很扁，减少留白 */
+@media (max-height: 520px) and (orientation: landscape) {
+  main > section[aria-label="ClassNote 首页"] .stag-1 {
+    padding-top: 64px !important;
+  }
+  main > section[aria-label="ClassNote 首页"] .scroll-hint {
+    display: none !important;
+  }
+}
+
+/* 尊重系统的减少动效设置（原样式已处理动画，这里补主题切换过渡） */
+@media (prefers-reduced-motion: reduce) {
+  html[data-skin] *,
+  .skin-panel,
+  .skin-btn {
+    transition: none !important;
+  }
+}
+
+/* 打印：去掉浮层与装饰 */
+@media print {
+  .skin-btn,
+  .skin-panel,
+  .intro,
+  .topbar {
+    display: none !important;
+  }
+}
