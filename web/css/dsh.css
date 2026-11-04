@@ -43,12 +43,19 @@ html[data-ui="dsh"] .app {
   height: 100vh;
   background: var(--bg);
 }
+/* 三块都必须显式落在第一行：只写 grid-column 的话，DOM 里排在
+   main / inspector 之后的 .rail 会被自动排到第二行，整条侧栏掉到
+   屏幕外面去（100vh 的行高刚好把它挤出可视区）。 */
+html[data-ui="dsh"] .rail,
+html[data-ui="dsh"] .main,
+html[data-ui="dsh"] .inspector { grid-row: 1; }
 html[data-ui="dsh"] .rail {
   grid-column: 1; order: 0;
   width: auto; flex: none; border-right: var(--dsw-hairline);
   background: var(--bg-side);
   padding: 12px 10px 10px;
   gap: 12px;
+  min-height: 0; overflow: hidden;
 }
 html[data-ui="dsh"] .main { grid-column: 2; position: relative; }
 html[data-ui="dsh"] .inspector {
@@ -646,3 +653,406 @@ html[data-ui="legacy"] .style-switch button { font-size: 11.5px; }
   resize: vertical;
 }
 .up-adv textarea::placeholder { color: var(--ink-3); }
+
+/* ============================================================
+   独立页面（Agent / 插件 / 主题）：与主页共用一套语言
+   ------------------------------------------------------------
+   这一组原先只在主页做了改造，切到 DSH 后进插件页、主题页会
+   看到「页面标题大一号、卡片还是旧的圆角」的半吊子状态。
+   ============================================================ */
+
+/* 内容列：主页保持 820 的阅读宽度，商店类页面放宽，
+   否则右侧一列筛选/操作会把列表挤成窄条。 */
+/* 左对齐到顶栏标题：居中的话内容会比标题缩进 40px，
+   在「工具条 + 列表」这种页面上看着像没对齐。 */
+html[data-ui="dsh"] .view.page-view { max-width: 1180px; margin: 0; }
+html[data-ui="dsh"] .view { padding-bottom: 28px; }
+
+/* 页头压缩成工具条：标题已经在顶栏，这里只留说明与操作。 */
+html[data-ui="dsh"] .page-head {
+  align-items: center;
+  gap: 16px;
+  margin: 2px 0 16px;
+  padding-bottom: 12px;
+  border-bottom: var(--dsw-hairline);
+}
+html[data-ui="dsh"] .page-head .eyebrow { display: none; }
+html[data-ui="dsh"] .page-head h2 { display: none; }
+html[data-ui="dsh"] .page-head p {
+  margin: 0;
+  max-width: 760px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+html[data-ui="dsh"] .page-actions { gap: 6px; }
+
+/* ---------- 商店：搜索、标签页、列表 ---------- */
+html[data-ui="dsh"] .store-toolbar { gap: 8px; margin-bottom: 10px; }
+html[data-ui="dsh"] .store-toolbar input[type="text"],
+html[data-ui="dsh"] .store-toolbar input:not([type]) {
+  flex: 0 1 320px;
+  height: 34px;
+  padding: 0 12px;
+  border: var(--dsw-hairline);
+  border-radius: var(--dsw-radius-md);
+  background: var(--bg-panel);
+  font-size: 12.5px;
+}
+html[data-ui="dsh"] .store-toolbar input:focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+html[data-ui="dsh"] .store-tabs {
+  padding: 3px;
+  gap: 2px;
+  border: 0;
+  border-radius: var(--dsw-radius-md);
+  background: var(--bg-sunken);
+}
+html[data-ui="dsh"] .store-tabs button {
+  padding: 4px 12px;
+  border-radius: var(--dsw-radius-sm);
+  font-size: 12px;
+}
+html[data-ui="dsh"] .store-tabs button.active {
+  background: var(--bg-panel);
+  box-shadow: 0 0 0 .5px var(--line);
+}
+html[data-ui="dsh"] .store-list { gap: 8px; }
+html[data-ui="dsh"] .store-row {
+  padding: 12px 14px;
+  border: var(--dsw-hairline);
+  border-radius: var(--dsw-radius-lg);
+  background: var(--bg-panel);
+}
+html[data-ui="dsh"] .store-row:hover {
+  background: var(--bg-panel);
+  box-shadow: var(--dsw-elevation-soft);
+}
+html[data-ui="dsh"] .store-icon { border-radius: var(--dsw-radius-md); }
+html[data-ui="dsh"] .store-main b { font-size: 13px; }
+html[data-ui="dsh"] .store-main p { font-size: 11.5px; }
+html[data-ui="dsh"] .store-row + .store-row { border-top: 0; }
+html[data-ui="dsh"] .store-empty { padding: 56px 0; font-size: 12px; }
+
+html[data-ui="dsh"] .theme-store { gap: 20px; }
+html[data-ui="dsh"] .theme-section h3 { font-size: 10.5px; letter-spacing: .14em; }
+html[data-ui="dsh"] .theme-store-grid { gap: 12px; }
+html[data-ui="dsh"] .theme-tile { padding: 10px; border-radius: var(--dsw-radius-lg); }
+html[data-ui="dsh"] .theme-tile:hover {
+  transform: none;
+  border-color: var(--line-strong);
+  box-shadow: var(--dsw-elevation-soft);
+}
+html[data-ui="dsh"] .theme-tile .t-actions .btn { border-radius: var(--dsw-radius-sm); }
+
+/* ---------- Agent 对话 ---------- */
+html[data-ui="dsh"] .agent-shell {
+  /* 页头被压缩后，按旧的 260px 留白会在底部空出一大块 */
+  height: calc(100vh - 150px);
+  border: var(--dsw-hairline);
+  border-radius: var(--dsw-radius-xl);
+  box-shadow: none;
+  background: var(--bg-panel);
+}
+/* 用户气泡：原来沿用 legacy 的白字，但 DSH 下底色换成了浅色混合，
+   白字直接看不见——这里同时改字色与描边。 */
+html[data-ui="dsh"] .agent-msg.user {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-panel));
+  border: .5px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-bottom-right-radius: var(--dsw-radius-sm);
+}
+html[data-ui="dsh"] .agent-msg.assistant { border-bottom-left-radius: var(--dsw-radius-sm); }
+html[data-ui="dsh"] .agent-suggest { gap: 6px; padding: 0 16px 12px; }
+html[data-ui="dsh"] .agent-suggest button {
+  padding: 4px 11px;
+  border: var(--dsw-hairline);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--bg-panel);
+  font-size: 11.5px;
+}
+html[data-ui="dsh"] .agent-suggest button:hover { border-color: var(--accent); }
+html[data-ui="dsh"] .agent-composer textarea {
+  border: var(--dsw-hairline);
+  border-radius: var(--dsw-radius-md);
+  background: var(--bg-panel);
+}
+
+/* ---------- 右侧栏 ---------- */
+html[data-ui="dsh"] .stat { border-radius: var(--dsw-radius-md); border: var(--dsw-hairline); }
+html[data-ui="dsh"] .stat b { font-family: var(--sans); font-size: 16px; font-weight: 620; }
+html[data-ui="dsh"] .insp-section + .insp-section { border-top: var(--dsw-hairline); }
+html[data-ui="dsh"] .insp-chat { font-size: 12px; }
+
+/* ---------- 空状态 ---------- */
+html[data-ui="dsh"] .empty-state { padding: 64px 20px 48px; }
+html[data-ui="dsh"] .empty-art svg { width: 76px; height: 76px; }
+html[data-ui="dsh"] .empty-state h3 { font-size: 15.5px; font-weight: 600; }
+html[data-ui="dsh"] .empty-state p { font-size: 12.5px; line-height: 1.75; }
+
+/* ============================================================
+   设置抽屉：改成 DSH 的「左侧目录 + 右侧设置项」窗口
+   ------------------------------------------------------------
+   原先只换了几处圆角，抽屉仍是通栏右侧页签 + 22px 内边距，
+   切到 DSH 后这是最明显的一块「没改造」的界面。
+   ============================================================ */
+html[data-ui="dsh"] .drawer {
+  top: 12px; right: 12px; bottom: 12px; left: auto;
+  width: min(780px, calc(100vw - 24px));
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  border: var(--dsw-hairline);
+  border-left: var(--dsw-hairline);
+  border-radius: var(--dsw-radius-xl);
+  background: var(--bg-panel);
+  box-shadow: 0 24px 80px rgba(20, 18, 15, .22);
+  overflow: hidden;
+  animation: dshDrawerIn .24s cubic-bezier(.22,.8,.3,1);
+}
+@keyframes dshDrawerIn { from { opacity: 0; transform: translateX(14px) } to { opacity: 1; transform: none } }
+html[data-ui="dsh"] .drawer.wide { width: min(920px, calc(100vw - 24px)); }
+
+html[data-ui="dsh"] .drawer-head {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  padding: 14px 16px 12px 18px;
+  border-bottom: var(--dsw-hairline);
+}
+html[data-ui="dsh"] .drawer-head h2 { font-size: 14.5px; font-weight: 620; letter-spacing: .01em; }
+
+html[data-ui="dsh"] .drawer-tabs {
+  grid-column: 1;
+  background: var(--bg-side);
+  grid-row: 2;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  padding: 10px 8px;
+  border-right: var(--dsw-hairline);
+  border-bottom: 0;
+  overflow-y: auto;
+}
+html[data-ui="dsh"] .drawer-tabs button {
+  padding: 7px 10px;
+  border-radius: var(--dsw-radius-sm);
+  font-size: 12.5px;
+  text-align: left;
+  color: var(--ink-2);
+}
+html[data-ui="dsh"] .drawer-tabs button:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+html[data-ui="dsh"] .drawer-tabs button.active {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--ink);
+  font-weight: 550;
+  box-shadow: inset 0 0 0 .5px var(--line);
+}
+
+html[data-ui="dsh"] .drawer-body { grid-column: 2; grid-row: 2; padding: 18px 22px 26px; }
+html[data-ui="dsh"] .drawer-body h3 {
+  margin: 22px 0 10px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+html[data-ui="dsh"] .drawer-body h3:first-child { margin-top: 0; }
+html[data-ui="dsh"] .drawer-body .desc { font-size: 11.5px; line-height: 1.65; }
+
+html[data-ui="dsh"] .drawer-foot {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  justify-content: flex-end;
+  padding: 10px 18px 14px;
+  border-top: var(--dsw-hairline);
+  background: var(--bg-panel);
+}
+/* 提示在前、按钮在右：auto 外边距要加在按钮的左侧，
+   加在末尾的 hint 上会把整组元素留在左边。 */
+html[data-ui="dsh"] .drawer-foot .btn.primary {
+  margin-left: auto;
+  height: 34px;
+  padding: 0 16px;
+}
+
+/* 抽屉里的控件：统一成 34px 高、12px 圆角、发丝线 */
+html[data-ui="dsh"] .drawer-body .field > span {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+html[data-ui="dsh"] .drawer-body .field { gap: 6px; margin-bottom: 14px; }
+html[data-ui="dsh"] .drawer-body input:not([type]),
+html[data-ui="dsh"] .drawer-body input[type="text"],
+html[data-ui="dsh"] .drawer-body input[type="password"],
+html[data-ui="dsh"] .drawer-body input[type="number"],
+html[data-ui="dsh"] .drawer-body select,
+html[data-ui="dsh"] .drawer-body textarea,
+html[data-ui="dsh"] .field input,
+html[data-ui="dsh"] .field select {
+  height: 34px;
+  padding: 0 11px;
+  border: var(--dsw-hairline);
+  border-radius: var(--dsw-radius-md);
+  background: var(--bg-panel);
+  color: var(--ink);
+  font-size: 12.5px;
+}
+html[data-ui="dsh"] .drawer-body textarea { height: auto; padding: 8px 11px; line-height: 1.65; }
+html[data-ui="dsh"] .drawer-body input:focus,
+html[data-ui="dsh"] .drawer-body select:focus,
+html[data-ui="dsh"] .drawer-body textarea:focus,
+html[data-ui="dsh"] .field input:focus,
+html[data-ui="dsh"] .field select:focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+  outline: none;
+}
+html[data-ui="dsh"] .drawer-body .switch-row { padding: 10px 0; }
+html[data-ui="dsh"] .drawer-body .seg { margin-bottom: 14px; }
+html[data-ui="dsh"] .preset-grid { gap: 8px; margin-bottom: 16px; }
+html[data-ui="dsh"] .preset {
+  border: var(--dsw-hairline);
+  border-radius: var(--dsw-radius-md);
+  background: var(--bg-panel);
+  padding: 9px 11px;
+}
+html[data-ui="dsh"] .preset:hover { box-shadow: var(--dsw-elevation-soft); border-color: var(--line-strong); }
+html[data-ui="dsh"] .preset.active {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-panel));
+}
+html[data-ui="dsh"] .seg {
+  border: var(--dsw-hairline);
+  border-radius: var(--dsw-radius-md);
+  background: var(--bg-sunken);
+  padding: 3px;
+}
+html[data-ui="dsh"] .seg-item { border-radius: var(--dsw-radius-sm); font-size: 12px; padding: 5px 12px; }
+html[data-ui="dsh"] .seg-item.active { box-shadow: 0 0 0 .5px var(--line); }
+html[data-ui="dsh"] .icc-box,
+html[data-ui="dsh"] .np-master,
+html[data-ui="dsh"] .theme-editor {
+  border: var(--dsw-hairline);
+  border-radius: var(--dsw-radius-lg);
+  background: var(--bg-sunken);
+}
+html[data-ui="dsh"] .test-result {
+  border-radius: var(--dsw-radius-md);
+  font-size: 11.5px;
+}
+html[data-ui="dsh"] .theme-grid { gap: 10px; }
+html[data-ui="dsh"] .theme-card {
+  border: var(--dsw-hairline);
+  border-radius: var(--dsw-radius-md);
+  background: var(--bg-panel);
+  padding: 9px;
+}
+html[data-ui="dsh"] .theme-card.active { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent); }
+html[data-ui="dsh"] .drawer-body .kv { font-size: 12px; padding: 7px 0; border-bottom: var(--dsw-hairline); }
+html[data-ui="dsh"] .drawer-body .kv:last-of-type { border-bottom: 0; }
+
+/* ============================================================
+   首次引导：同一套面板度量
+   ============================================================ */
+html[data-ui="dsh"] .ob-card {
+  border: var(--dsw-hairline);
+  border-radius: var(--dsw-radius-panel);
+  background: var(--bg-panel);
+  box-shadow: var(--dsw-elevation-panel);
+}
+html[data-ui="dsh"] .ob-card h2 {
+  font-family: var(--sans);
+  font-size: 25px;
+  font-weight: 620;
+  letter-spacing: -.01em;
+  line-height: 1.32;
+}
+html[data-ui="dsh"] .ob-h2 { font-size: 21px; font-weight: 620; }
+html[data-ui="dsh"] .ob-step { font-family: var(--mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
+html[data-ui="dsh"] .ob-line { max-width: 36px; }
+html[data-ui="dsh"] .ob-lead { font-size: 13px; line-height: 1.75; }
+html[data-ui="dsh"] .icc-box { padding: 12px 14px; }
+
+/* ---------- 提示条与灯箱 ---------- */
+html[data-ui="dsh"] .toast { border-radius: var(--dsw-radius-md); font-size: 12px; }
+html[data-ui="dsh"] .lightbox img { border-radius: var(--dsw-radius-lg); }
+
+/* ---------- 响应式：窄屏时抽屉铺满，标签回到横向 ---------- */
+@media (max-width: 900px) {
+  html[data-ui="dsh"] .drawer,
+  html[data-ui="dsh"] .drawer.wide {
+    top: 0; right: 0; bottom: 0;
+    width: 100vw;
+    border-radius: 0;
+    border: 0;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+  html[data-ui="dsh"] .drawer-tabs {
+    grid-column: 1;
+    grid-row: 2;
+    flex-direction: row;
+    border-right: 0;
+    border-bottom: var(--dsw-hairline);
+    padding: 8px 12px;
+    overflow-x: auto;
+  }
+  html[data-ui="dsh"] .drawer-body { grid-column: 1; grid-row: 3; padding: 16px; }
+  html[data-ui="dsh"] .drawer-foot { grid-row: 4; }
+  html[data-ui="dsh"] .view.page-view { max-width: none; }
+}
+
+/* ---------- 收拢状态的侧栏 ---------- */
+html[data-ui="dsh"] .app.rail-collapsed .rail-start {
+  width: 36px; height: 36px;
+  margin: 0 auto; padding: 0;
+  border-radius: var(--dsw-radius-md);
+}
+html[data-ui="dsh"] .app.rail-collapsed .rail-item.active::after,
+html[data-ui="dsh"] .app.rail-collapsed .rail-group.active::after { display: none; }
+/* 样式切换器是两段文字，收拢后没有位置，展开再切即可 */
+html[data-ui="dsh"] .app.rail-collapsed .style-switch { display: none; }
+
+/* ---------- 课表 ---------- */
+html[data-ui="dsh"] .panel { padding: 16px 18px; }
+html[data-ui="dsh"] .panel-head { margin-bottom: 10px; }
+html[data-ui="dsh"] .panel-head h2 { font-size: 14px; font-weight: 620; }
+html[data-ui="dsh"] .tl-table { font-size: 12.5px; }
+html[data-ui="dsh"] .tl-table td { padding: 10px 6px; border-bottom: var(--dsw-hairline); }
+html[data-ui="dsh"] .tl-table .t { font-family: var(--mono); font-size: 11px; }
+html[data-ui="dsh"] .tl-table .now td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+html[data-ui="dsh"] .tl-table .now td:first-child { border-radius: var(--dsw-radius-sm) 0 0 var(--dsw-radius-sm); }
+html[data-ui="dsh"] .tl-table .now td:last-child { border-radius: 0 var(--dsw-radius-sm) var(--dsw-radius-sm) 0; }
+
+/* 抽屉目录只纵向滚，不要横向滚动条 */
+html[data-ui="dsh"] .drawer-tabs { overflow-x: hidden; }
+
+/* DSH 专属结构在经典样式下不该出现：
+   最近课堂、来源标注、输入区上方的模型胶囊都属于 DSH 布局。 */
+html[data-ui="legacy"] .dsh-sessions,
+html[data-ui="legacy"] .dsh-credit,
+html[data-ui="legacy"] .dsh-composer-bar { display: none; }
+
+/* 最近课堂最多占侧栏四成，课堂记录多了不能把导航挤没 */
+html[data-ui="dsh"] .dsh-sessions { flex: 0 1 auto; max-height: 42vh; }
+
+/* 更新面板在抽屉里的度量对齐 */
+html[data-ui="dsh"] .drawer-body .field > span { text-transform: none; letter-spacing: .06em; }
+html[data-ui="dsh"] .up-nodes { border-radius: var(--dsw-radius-lg); }
+html[data-ui="dsh"] .up-toolbar { gap: 8px; }
+html[data-ui="dsh"] .up-node-head { padding: 8px 12px; }
+html[data-ui="dsh"] .up-node { padding: 9px 12px; }
+
+/* 会话行：标题与副标题必须是两行，靠行内元素会连成一条 */
+.dsh-session .s-title,
+.dsh-session .s-sub { display: block; }
+/* 最近课堂紧跟导航，不要被 flex:1 的导航推到侧栏底部 */
+html[data-ui="dsh"] .rail-nav { flex: 0 1 auto; }
+html[data-ui="dsh"] .rail-foot { margin-top: auto; }

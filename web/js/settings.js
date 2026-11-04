@@ -1,7 +1,7 @@
 import { api } from './api.js';
 import { $, $$, el, toast, esc } from './util.js';
 import { applyTheme } from './theme.js';
-import { applyUiStyle } from './shell.js';
+import { applyUiStyle, applyStyleNotice } from './shell.js';
 import { asrModelsHtml, loadASRModels, onASRProgress } from './asrmodels.js';
 import { updatePanelHtml, bindUpdate } from './update.js';
 
@@ -350,6 +350,10 @@ function appearTab(cfg) {
       </button>
     </div>
     <div class="desc" style="margin-top:6px">DSH 布局参考 <a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="noreferrer">DeepSeek Harness</a>（MIT License）的排版与圆角规范，配色仍使用下面的主题。</div>
+    <div class="switch-row">
+      <div><div class="label">在侧栏显示来源标注</div><div class="sub">关闭后 DSH 布局不再显示「布局参考 DeepSeek Harness」</div></div>
+      <span class="switch"><input type="checkbox" id="f-stylenotice" ${cfg.ui.hideStyleNotice ? '' : 'checked'}><i></i></span>
+    </div>
 
     <h3>主题</h3>
     <div class="desc">界面同时适用于本地窗口与浏览器访问，切换后立即生效。</div>
@@ -584,6 +588,11 @@ function bindAppearance() {
     saveConfig(true);
     toast(style === 'dsh' ? '已切换到 DSH 样式' : '已切换到经典样式', 'ok');
   }));
+  $('#f-stylenotice')?.addEventListener('change', (e) => {
+    cfg.ui.hideStyleNotice = !e.target.checked;
+    applyStyleNotice();
+    saveConfig(true);
+  });
   const custom = (cfg.ui.customThemes) || [];
   $$('.theme-card').forEach((b) => b.addEventListener('click', async () => {
     cfg.ui.theme = b.dataset.theme;

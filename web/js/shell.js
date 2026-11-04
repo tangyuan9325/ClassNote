@@ -70,9 +70,20 @@ export function mountShell(state, opts = {}) {
     wrap.insertBefore(bar, wrap.firstChild);
   }
   renderComposerBar();
+  // 标注已经插进 DOM，这里再应用开关状态。
+  applyStyleNotice();
 
   applyUiStyle(S?.cfg?.ui?.style);
   loadRailSessions();
+}
+
+// applyStyleNotice 应用「是否显示来源标注」。
+//
+// 借鉴别人的布局要写清来源，但有人不希望侧栏常驻一行小字，
+// 所以给了开关；配置字段早就有，之前没接到界面上。
+export function applyStyleNotice() {
+  const box = $('#dsh-credit');
+  if (box) box.hidden = !!S?.cfg?.ui?.hideStyleNotice;
 }
 
 // renderComposerBar 显示当前模型与权限，点一下跳到设置里的 Agent 面板。

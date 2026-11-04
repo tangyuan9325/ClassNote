@@ -1,7 +1,7 @@
 ﻿# Build ClassNote for Windows
-# Usage: powershell -ExecutionPolicy Bypass -File build.ps1 [-Version 1.8.2]
+# Usage: powershell -ExecutionPolicy Bypass -File build.ps1 [-Version 1.8.3]
 param(
-    [string]$Version = "1.8.2"
+    [string]$Version = "1.8.3"
 )
 
 $ErrorActionPreference = "Stop"
