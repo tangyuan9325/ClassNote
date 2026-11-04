@@ -97,6 +97,15 @@ main > footer.sec {
   color: #fff;
   opacity: .72;
   pointer-events: none;
+  /* 幕布在 2.25s 抬起，这行字必须跟着淡出，否则会一直钉在视口底部
+     压住正文（它所在的 .intro 是 fixed 全屏层） */
+  animation: intro-foot-out .45s ease 2.35s forwards;
+}
+@keyframes intro-foot-out {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
 }
 
 /* 更新日志里的 Markdown：容器是内联样式的匿名 div，只能按属性命中 */
