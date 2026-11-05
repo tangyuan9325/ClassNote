@@ -375,7 +375,10 @@ func LocalTranscribe(ctx context.Context, port int, wav []byte, language string)
 	_ = mw.WriteField("language", language)
 	_ = mw.WriteField("response_format", "json")
 	_ = mw.WriteField("temperature", "0")
-	_ = mw.WriteField("prompt", "课堂讲课内容，语文、化学、物理等学科术语。")
+	// 这里原本发的是「课堂讲课内容，语文、化学、物理等学科术语。」
+	// whisper.cpp 会把 prompt 当成上文，静音段上直接把它续写成正文，
+	// 表现就是转写里凭空多出一句「有关语文、数学、英语等……」。
+	// 见 asr.go 里同一处改动的原因说明。
 	if err := mw.Close(); err != nil {
 		return "", err
 	}

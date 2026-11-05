@@ -17,6 +17,7 @@ import (
 
 	"classnote/internal/audio"
 	"classnote/internal/config"
+	pcmutil "classnote/internal/pcm"
 )
 
 // Transcriber 执行语音转写。
@@ -64,7 +65,14 @@ func (t *Transcriber) Transcribe(ctx context.Context, pcm []byte, sampleRate int
 	if len(pcm) < 3200 {
 		return "", nil
 	}
-	wav := audio.EncodeWAV(pcm, sampleRate)
+	// 先裁掉首尾静音。分段器会把句尾最多 700ms 的静音一起送过来，
+	// 那截静音正是 whisper 开始「自由发挥」的起点；裁完仍是空就整段丢弃，
+	// 连请求都不用发。
+	trimmed := pcmutil.TrimSilence(pcm, sampleRate)
+	if len(trimmed) == 0 {
+		return "", nil
+	}
+	wav := audio.EncodeWAV(trimmed, sampleRate)
 	switch t.cfg.Mode {
 	case "api":
 		return t.transcribeAPI(ctx, wav)
@@ -91,8 +99,11 @@ func (t *Transcriber) transcribeAPI(ctx context.Context, wav []byte) (string, er
 	}
 	_ = mw.WriteField("response_format", "json")
 	_ = mw.WriteField("temperature", "0")
-	// 领域提示词，能明显提升课堂术语的准确率。
-	_ = mw.WriteField("prompt", "课堂讲课内容，涉及语文课文、古诗文、修辞手法、写作方法。")
+	// 早先这里塞了一句「课堂讲课内容，涉及语文课文、古诗文、修辞手法、写作方法。」
+	// 想靠领域提示词提高术语准确率，结果适得其反：whisper 会把这段提示当成
+	// 上一轮的正文，遇到没有明确语音的段落就顺着它往下编，于是转写里会冒出
+	// 「有关语文、数学、英语等学科的内容」这类根本没人说过的句子。
+	// 提示词带来的收益远小于这个代价，直接不发。
 	if err := mw.Close(); err != nil {
 		return "", err
 	}

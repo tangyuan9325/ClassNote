@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"classnote/internal/asr"
+	"classnote/internal/asrtext"
 	"classnote/internal/audio"
 	"classnote/internal/capture"
 	"classnote/internal/config"
@@ -524,11 +525,16 @@ func (e *Engine) asrLoop() {
 		text = strings.TrimSpace(text)
 		// whisper 在静音/噪声上会输出模板句幻觉（"课堂讲课内容，语文、化学…"），
 		// 直接落库会把整堂课变成一屏复读。这里丢掉无效片段。
-		text = cleanASRText(text)
+		text = asrtext.Clean(text)
 		if text == "" || seg == nil {
 			continue
 		}
 		e.mu.Lock()
+		// 连续两段被同一句幻觉重复填充时，只留第一次。
+		if asrtext.IsEchoOfTail(seg.Transcript, text) {
+			e.mu.Unlock()
+			continue
+		}
 		seg.Transcript = joinTranscript(seg.Transcript, text)
 		full := seg.Transcript
 		e.mu.Unlock()

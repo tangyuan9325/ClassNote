@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"classnote/internal/asrtext"
 	"classnote/internal/llm"
 	"classnote/internal/logx"
 	"classnote/internal/store"
@@ -87,7 +88,7 @@ func (e *Engine) GenerateReport(sess *store.Session) error {
 	view.TimeRange = sess.StartedAt.Format("15:04") + " - " + end.Format("15:04")
 	for _, seg := range sess.Segments {
 		// 只统计清洗后的有效转写，别再拿幻觉文本凑字数。
-		view.Words += len([]rune(cleanTranscriptForReport(seg.Transcript)))
+		view.Words += len([]rune(asrtext.CleanForReport(seg.Transcript)))
 	}
 	dur := end.Sub(sess.StartedAt)
 	view.Duration = fmt.Sprintf("%d 分钟", int(dur.Minutes()))
@@ -109,7 +110,7 @@ func (e *Engine) GenerateReport(sess *store.Session) error {
 		notes := normalizeModelText(rawNotes)
 		evidence := normalizeModelText(seg.CopyEvidence)
 		// 先清 ASR 幻觉再规范化：老会话里可能已经存进了大段复读的幻觉文本。
-		transcript := normalizeModelText(cleanTranscriptForReport(seg.Transcript))
+		transcript := normalizeModelText(asrtext.CleanForReport(seg.Transcript))
 		board := normalizeModelText(seg.BoardText)
 		if looksLikeRawJSON(summary) || looksLikeJSONFragment(summary) || strings.TrimSpace(summary) == "{" {
 			summary = firstLine(notes)
