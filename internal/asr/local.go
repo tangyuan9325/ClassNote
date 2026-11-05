@@ -375,6 +375,10 @@ func LocalTranscribe(ctx context.Context, port int, wav []byte, language string)
 	_ = mw.WriteField("language", language)
 	_ = mw.WriteField("response_format", "json")
 	_ = mw.WriteField("temperature", "0")
+	// 不让窗口之间互相带上下文：课堂片段通常 12 秒以内、只有一个窗口，
+	// 这条基本不生效；真碰上长段连读时，它挡掉的是"上一窗结尾被当成下一窗
+	// 开头"进而整句复读的老毛病。
+	_ = mw.WriteField("no_context", "true")
 	// 这里原本发的是「课堂讲课内容，语文、化学、物理等学科术语。」
 	// whisper.cpp 会把 prompt 当成上文，静音段上直接把它续写成正文，
 	// 表现就是转写里凭空多出一句「有关语文、数学、英语等……」。
