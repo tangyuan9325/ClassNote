@@ -91,11 +91,39 @@ func isSubjectEnumeration(s string) bool {
 	return reSubjectLead.MatchString(s) && n >= 3
 }
 
+// captionPairs 是 whisper 用来标注非语音内容的括号。
+var captionPairs = [][2]string{
+	{"(", ")"}, {"（", "）"}, {"[", "]"}, {"【", "】"}, {"〔", "〕"},
+}
+
+// isCaptionOnly 判断整段是不是一个括号括起来的旁白。
+//
+// 静音段上 whisper 的另一种典型输出是「(把水煮到水上)」「（笑声）」
+// 这类非语音标注——实测在纯噪声上稳定复现。整段被一对括号包住、
+// 长度又很短，那就不可能是老师的原话，直接丢掉。
+func isCaptionOnly(s string) bool {
+	s = strings.TrimSpace(s)
+	n := len([]rune(s))
+	if n == 0 || n > 24 {
+		return false
+	}
+	for _, p := range captionPairs {
+		if strings.HasPrefix(s, p[0]) && strings.HasSuffix(s, p[1]) && n > 2 {
+			inner := strings.TrimSuffix(strings.TrimPrefix(s, p[0]), p[1])
+			return !strings.ContainsAny(inner, "()（）[]【】〔〕")
+		}
+	}
+	return false
+}
+
 // Clean 清洗一段转写文本，去掉幻觉与病态重复。
 // 返回空字符串表示“这段音频没有有效内容”，调用方应丢弃而不是落库。
 func Clean(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
+		return ""
+	}
+	if isCaptionOnly(s) {
 		return ""
 	}
 	if !needsASRClean(s) {

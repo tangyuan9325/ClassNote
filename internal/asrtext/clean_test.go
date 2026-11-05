@@ -56,6 +56,27 @@ func TestDropsRepeatedTemplate(t *testing.T) {
 	}
 }
 
+func TestDropsCaptionOnly(t *testing.T) {
+	// 静音/噪声段上 whisper 稳定吐出的旁白（实测于 whisper.cpp 1.7.4 + base 模型）
+	cases := []string{"(把水煮到水上)", "（笑声）", "[音乐]", "【掌声】", "(用手指打開)"}
+	for _, c := range cases {
+		if got := Clean(c); got != "" {
+			t.Errorf("旁白未被清除 %q -> %q", c, got)
+		}
+	}
+	// 括号只是句中一部分的，不能删
+	keep := []string{
+		"我们把 a+b 写在括号（a+b）里。",
+		"（a+b）的平方展开有三项。",
+		"这一段（第二段）讲的是顶点式。",
+	}
+	for _, c := range keep {
+		if got := Clean(c); got != c {
+			t.Errorf("正常文本被误删 %q -> %q", c, got)
+		}
+	}
+}
+
 func TestEchoOfTail(t *testing.T) {
 	full := "我们看这道题。好，翻到下一页。"
 	if !IsEchoOfTail(full, "好，翻到下一页。") {
