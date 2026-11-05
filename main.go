@@ -35,7 +35,7 @@ import (
 var webAssets embed.FS
 
 var (
-	version   = "1.8.3"
+	version   = "1.2.11"
 	buildTime = "dev"
 )
 
