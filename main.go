@@ -298,6 +298,8 @@ func main() {
 
 	// 全局快捷键：截图 → 本地识别 → AI 讲解。
 	// 放在托盘之后注册，注册失败才能用气泡告诉用户，而不是只写进日志。
+	onHotkey := func() { srv.TriggerShot(shotDone) }
+	lastCombo := ""
 	applyHotkey := func(combo string) error {
 		hotkeyMu.Lock()
 		defer hotkeyMu.Unlock()
@@ -305,11 +307,20 @@ func main() {
 			curHotkey.Close()
 			curHotkey = nil
 		}
-		hk, err := app.RegisterHotkey(combo, func() { srv.TriggerShot(shotDone) })
+		hk, err := app.RegisterHotkey(combo, onHotkey)
 		if err != nil {
+			// 新组合键打错或被占用时，把上一个键装回去：
+			// 不该因为一次笔误让用户彻底没有快捷键。
+			if lastCombo != "" && lastCombo != combo {
+				if old, e2 := app.RegisterHotkey(lastCombo, onHotkey); e2 == nil {
+					curHotkey = old
+					logx.Warnf("main", "新快捷键不可用，已恢复 %s", lastCombo)
+				}
+			}
 			return err
 		}
 		curHotkey = hk
+		lastCombo = hk.Combo.Text
 		logx.Infof("main", "识图快捷键已注册：%s", hk.Combo.Text)
 		return nil
 	}
