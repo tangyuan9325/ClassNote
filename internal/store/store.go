@@ -16,28 +16,33 @@ import (
 
 // Segment 是一页幻灯片的笔记单元。
 type Segment struct {
-	ID           string    `json:"id"`
-	Index        int       `json:"index"`      // 第几页（按本堂课出现顺序）
-	SlideIndex   int       `json:"slideIndex"` // PPT 原始页码
-	CreatedAt    time.Time `json:"createdAt"`
-	ImageFile    string    `json:"imageFile"`
-	Width        int       `json:"width"`
-	Height       int       `json:"height"`
-	SHA          string    `json:"sha"`
-	Transcript   string    `json:"transcript"`
-	Notes        string    `json:"notes"`
-	Summary      string    `json:"summary"`
-	BoardText    string    `json:"boardText"`
-	KeyPoints    []string  `json:"keyPoints"`
-	Tips         []string  `json:"tips"`
-	Copying      bool      `json:"copying"`
-	CopyScore    int       `json:"copyScore"`
-	CopyEvidence string    `json:"copyEvidence"`
-	Status       string    `json:"status"` // pending | analyzing | done | failed
-	Model        string    `json:"model"`
-	Tokens       int       `json:"tokens"`
-	Error        string    `json:"error,omitempty"`
-	Duration     int       `json:"durationSec"`
+	ID         string    `json:"id"`
+	Index      int       `json:"index"`      // 第几页（按本堂课出现顺序）
+	SlideIndex int       `json:"slideIndex"` // PPT 原始页码
+	CreatedAt  time.Time `json:"createdAt"`
+	ImageFile  string    `json:"imageFile"`
+	Width      int       `json:"width"`
+	Height     int       `json:"height"`
+	SHA        string    `json:"sha"`
+	Transcript string    `json:"transcript"`
+	Notes      string    `json:"notes"`
+	Summary    string    `json:"summary"`
+	BoardText  string    `json:"boardText"`
+	// BoardSource 说明 boardText 从哪来：pptx（课件文件）| ocr（截图识别）|
+	// pptx+ocr（文件文字 + 补充识别）| 空（没有画面文字）。
+	BoardSource string `json:"boardSource,omitempty"`
+	// OCRMs 是这一页识别耗时，报告与排查时用。
+	OCRMs        int      `json:"ocrMs,omitempty"`
+	KeyPoints    []string `json:"keyPoints"`
+	Tips         []string `json:"tips"`
+	Copying      bool     `json:"copying"`
+	CopyScore    int      `json:"copyScore"`
+	CopyEvidence string   `json:"copyEvidence"`
+	Status       string   `json:"status"` // pending | analyzing | done | failed
+	Model        string   `json:"model"`
+	Tokens       int      `json:"tokens"`
+	Error        string   `json:"error,omitempty"`
+	Duration     int      `json:"durationSec"`
 }
 
 // ChatMessage 是课堂内的对话消息。

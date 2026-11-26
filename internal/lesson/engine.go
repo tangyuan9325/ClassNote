@@ -4,6 +4,7 @@ package lesson
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,8 +21,10 @@ import (
 	"classnote/internal/config"
 	"classnote/internal/llm"
 	"classnote/internal/logx"
+	"classnote/internal/ocr"
 	"classnote/internal/paths"
 	"classnote/internal/store"
+	"classnote/internal/textutil"
 )
 
 // Event 是推送给前端的实时事件。
@@ -72,6 +75,7 @@ type Engine struct {
 	det         *capture.Detector
 	client      llm.Client
 	asrCli      *asr.Transcriber
+	ocrCli      *ocr.Client
 	skillPrompt string
 	emitFn      func(Event)
 
@@ -99,19 +103,61 @@ type Engine struct {
 	startedAt time.Time
 	deck      *capture.Deck
 	deckPath  string
+
+	// OCR 服务熔断：连不上时先停 90 秒，别让每页分析都卡在同一个
+	// 连接超时上；ocrWarned 保证日志只提醒一次，不刷屏。
+	ocrFailUntil time.Time
+	ocrWarned    bool
+	// 同一张图（同一页被重复识别）只送一次服务，省显存也省等待。
+	ocrCache map[string]ocr.Result
 }
 
 // New 创建引擎。
 func New(paths paths.Paths, st *store.Store, cfg config.Config) *Engine {
 	return &Engine{
-		paths:   paths,
-		store:   st,
-		cfg:     cfg,
-		det:     capture.NewDetector(cfg.Capture),
-		asrCli:  asr.New(cfg.ASR),
-		stage:   "idle",
-		pending: map[string]int{},
+		paths:    paths,
+		store:    st,
+		cfg:      cfg,
+		det:      capture.NewDetector(cfg.Capture),
+		asrCli:   asr.New(cfg.ASR),
+		ocrCli:   ocr.New(ocrSettings(cfg.OCR)),
+		stage:    "idle",
+		pending:  map[string]int{},
+		ocrCache: map[string]ocr.Result{},
 	}
+}
+
+// ocrSettings 把配置转成识别客户端的参数，避免 lesson 包到处 import 两套结构。
+func ocrSettings(c config.OCRConfig) ocr.Settings {
+	return ocr.Settings{
+		Enabled: c.Enabled, BaseURL: c.BaseURL, APIKey: c.APIKey,
+		Model: c.Model, Prompt: c.Prompt,
+		TimeoutSec: c.TimeoutSec, MaxChars: c.MaxChars,
+	}
+}
+
+// SetOCR 替换识别客户端（配置变更时由 Update 调用）。
+func (e *Engine) SetOCR(c *ocr.Client) {
+	e.mu.Lock()
+	e.ocrCli = c
+	e.mu.Unlock()
+}
+
+// OCRStatus 给界面显示当前识别服务状态。
+func (e *Engine) OCRStatus() map[string]any {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := map[string]any{"enabled": false, "desc": "", "cooling": false}
+	if e.ocrCli == nil {
+		return out
+	}
+	out["enabled"] = e.ocrCli.Enabled()
+	out["desc"] = e.ocrCli.Describe()
+	if !e.ocrFailUntil.IsZero() && time.Now().Before(e.ocrFailUntil) {
+		out["cooling"] = true
+		out["coolingSec"] = int(time.Until(e.ocrFailUntil).Seconds())
+	}
+	return out
 }
 
 // OnEvent 注册事件回调。
@@ -134,6 +180,11 @@ func (e *Engine) Update(cfg config.Config) {
 	e.mu.Unlock()
 	e.det.UpdateConfig(cfg.Capture)
 	e.asrCli.Update(cfg.ASR)
+	e.SetOCR(ocr.New(ocrSettings(cfg.OCR)))
+	// 换了服务地址就重新给一次机会：上一次可能因为服务没启动而熔断。
+	e.mu.Lock()
+	e.ocrFailUntil = time.Time{}
+	e.mu.Unlock()
 }
 
 // SetSkillPrompt 注入启用中的技能包提示（每次会变化，直接覆盖）。
@@ -863,6 +914,89 @@ func (e *Engine) saveSegmentImage(seg *store.Segment, snap *capture.Snapshot) st
 	return filepath.ToSlash(filepath.Join(sessID, name))
 }
 
+// wantOCR 判断这一页要不要做画面文字识别。
+func (e *Engine) wantOCR(boardText string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.ocrCli == nil || !e.ocrCli.Enabled() {
+		return false
+	}
+	if !e.ocrFailUntil.IsZero() && time.Now().Before(e.ocrFailUntil) {
+		return false
+	}
+	// always：每页都识别，用来补手写批注、图片里的字和扫描件；
+	// fallback：只有 PPT 文件里读不到文字时才识别（白板、手写、投屏照片）。
+	if e.cfg.OCR.Mode == "always" {
+		return true
+	}
+	return strings.TrimSpace(boardText) == ""
+}
+
+// errOCROff 表示识别服务未开启或正在冷却，调用方静默降级。
+var errOCROff = errors.New("画面识别未启用")
+
+// recognizeImage 识别一张截图，带内存缓存与失败熔断。
+func (e *Engine) recognizeImage(ctx context.Context, img []byte, key string) (ocr.Result, error) {
+	e.mu.Lock()
+	cli := e.ocrCli
+	if cli == nil || !cli.Enabled() {
+		e.mu.Unlock()
+		return ocr.Result{}, errOCROff
+	}
+	if !e.ocrFailUntil.IsZero() && time.Now().Before(e.ocrFailUntil) {
+		e.mu.Unlock()
+		return ocr.Result{}, errOCROff
+	}
+	if key != "" {
+		if r, ok := e.ocrCache[key]; ok {
+			e.mu.Unlock()
+			return r, nil
+		}
+	}
+	e.mu.Unlock()
+
+	res, err := cli.Recognize(ctx, img, "image/jpeg")
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if err != nil {
+		// 只有「连不上」才熔断。单页识别失败（图太花、模型偶发输出异常）
+		// 不该让后面几十页都放弃识别。
+		if isConnLike(err) {
+			e.ocrFailUntil = time.Now().Add(90 * time.Second)
+			if !e.ocrWarned {
+				e.ocrWarned = true
+				logx.Warnf("lesson", "画面识别暂时不可用，已暂停 90 秒：%v", err)
+			}
+		}
+		return ocr.Result{}, err
+	}
+	e.ocrFailUntil = time.Time{}
+	e.ocrWarned = false
+	if key != "" {
+		if len(e.ocrCache) >= 64 {
+			// 长课堂会攒到上百页，直接换一张新表比维护 LRU 简单，也不会占多少内存。
+			e.ocrCache = map[string]ocr.Result{}
+		}
+		e.ocrCache[key] = res
+	}
+	return res, nil
+}
+
+// isConnLike 判断错误是否属于「服务不可达」这一类。
+func isConnLike(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, k := range []string{"没有启动", "连不上", "超时", "解析失败", "拒绝访问", "接口不存在"} {
+		if strings.Contains(msg, k) {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *Engine) analysisLoop() {
 	defer e.wgAna.Done()
 	for id := range e.anaQ {
@@ -933,14 +1067,50 @@ func (e *Engine) analyze(segID string) {
 	e.mu.Lock()
 	skill := e.skillPrompt
 	e.mu.Unlock()
-	prompt := analysisUser(subject, slideIndex, duration, boardText, transcript, prevSummary) + skill
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Second)
+	defer cancel()
+
+	// 图片只读一次，OCR 与视觉模型共用同一份字节。
+	var imgRaw []byte
+	if imageFile != "" {
+		imgRaw, _ = os.ReadFile(filepath.Join(captures, imageFile))
+	}
+
+	// 画面文字兜底识别：PPT 文件里读不到文字（白板、手写、投屏照片），
+	// 或用户要求每页都识别（补手写批注与图片里的字）时才会走这一步。
+	boardSource := ""
+	if strings.TrimSpace(boardText) != "" {
+		boardSource = "pptx"
+	}
+	ocrText, ocrMs := "", 0
+	if len(imgRaw) > 0 && e.wantOCR(boardText) {
+		res, err := e.recognizeImage(ctx, imgRaw, seg.SHA)
+		switch {
+		case err != nil && !errors.Is(err, errOCROff):
+			logx.Debugf("lesson", "第 %d 页画面识别跳过：%v", slideIndex, err)
+		case err == nil && strings.TrimSpace(res.Text) != "":
+			ocrText, ocrMs = res.Text, res.LatencyMS
+			switch {
+			case strings.TrimSpace(boardText) == "":
+				boardText, boardSource = ocrText, "ocr"
+			case !textutil.MostlyContained(ocrText, boardText):
+				boardText = boardText + "\n\n【补充识别（OCR）】\n" + ocrText
+				boardSource = "pptx+ocr"
+			}
+			logx.Infof("lesson", "第 %d 页画面识别 %d 字（%d ms）", slideIndex, res.Chars, res.LatencyMS)
+			e.mu.Lock()
+			seg.BoardSource, seg.OCRMs = boardSource, ocrMs
+			e.mu.Unlock()
+		}
+	}
+
+	prompt := analysisUser(subject, slideIndex, duration, boardText, boardSource, transcript, prevSummary) + skill
 	msgs := []llm.Message{llm.TextMessage(llm.RoleSystem, analysisSystem)}
 	usedImage := false
-	if imageFile != "" && vision {
-		if raw, err := os.ReadFile(filepath.Join(captures, imageFile)); err == nil {
-			msgs = append(msgs, llm.UserVision(prompt, base64.StdEncoding.EncodeToString(raw), "image/jpeg"))
-			usedImage = true
-		}
+	if len(imgRaw) > 0 && vision {
+		msgs = append(msgs, llm.UserVision(prompt, base64.StdEncoding.EncodeToString(imgRaw), "image/jpeg"))
+		usedImage = true
 	}
 	if !usedImage {
 		hint := "（本页没有可用图片，请依据画面文字与转写文本分析）"
@@ -950,8 +1120,6 @@ func (e *Engine) analyze(segID string) {
 		msgs = append(msgs, llm.UserText(prompt+"\n\n"+hint))
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
-	defer cancel()
 	e.mu.Lock()
 	// 网页版每门课固定一条对话，跨课堂也延续。所以只要学科非空就是「同一对话里的
 	// 后续提问」；这条对话里到底写没写过系统提示，由网页版客户端自己判断——
@@ -1005,6 +1173,11 @@ func (e *Engine) analyze(segID string) {
 	}
 	if looksLikeRawJSON(out.Summary) || looksLikeJSONFragment(out.Summary) || strings.TrimSpace(out.Summary) == "{" {
 		out.Summary = ""
+	}
+	// 模型看不到图、又只拿到 OCR 文本时，偶尔会把 board_text 写成「（无文字）」。
+	// 这时用识别结果补上，报告里至少能看到这一页写了什么。
+	if ocrText != "" && (strings.TrimSpace(out.BoardText) == "" || strings.Contains(out.BoardText, "无文字")) {
+		out.BoardText = clipLog(ocrText, 120)
 	}
 	e.mu.Lock()
 	seg.BoardText = out.BoardText

@@ -961,3 +961,106 @@ input, textarea, select { font-family: inherit; font-size: inherit; color: inher
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* ---------- 识图面板（截图 → 识别 → AI 讲解） ---------- */
+.shot-modal { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 26px; }
+.shot-modal[hidden] { display: none; }
+.shot-mask {
+  position: absolute; inset: 0; background: rgba(20, 18, 16, .42);
+  backdrop-filter: blur(3px); animation: fade .18s ease;
+}
+.shot-card {
+  position: relative; width: min(1060px, 96vw); max-height: 90vh;
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg-panel); border: 1px solid var(--line); border-radius: 16px;
+  box-shadow: var(--shadow-lg); animation: shot-in .26s cubic-bezier(.2, .7, .2, 1);
+}
+@keyframes shot-in { from { opacity: 0; transform: translateY(14px) scale(.985); } to { opacity: 1; transform: none; } }
+.shot-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  padding: 17px 20px 13px; border-bottom: 1px solid var(--line);
+}
+.shot-eyebrow { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
+.shot-heading h3 { margin: 5px 0 0; font-family: var(--serif); font-size: 20px; font-weight: 600; line-height: 1.35; color: var(--ink); }
+.shot-body {
+  display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr);
+  gap: 20px; padding: 18px 20px; overflow: auto; min-height: 0;
+}
+.shot-thumb { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 0; }
+.shot-thumb img {
+  width: 100%; max-height: 46vh; object-fit: contain; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--bg-sunken);
+}
+.shot-thumb img:not([src]) { display: none; }
+.shot-thumb figcaption { font-size: 11.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.shot-main { min-width: 0; display: flex; flex-direction: column; gap: 13px; }
+.shot-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.shot-chip {
+  font-size: 11.5px; padding: 3px 9px; border-radius: 999px;
+  background: var(--bg-sunken); border: 1px solid var(--line); color: var(--ink-2);
+}
+.shot-chip.live { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-soft); }
+.shot-chip.warn { color: var(--warn); }
+.shot-chip.bad { color: var(--danger); }
+.shot-explain { font-size: 14px; line-height: 1.78; color: var(--ink); }
+.shot-explain h1, .shot-explain h2, .shot-explain h3 { font-family: var(--serif); font-size: 16px; margin: 14px 0 6px; }
+.shot-explain p { margin: 0 0 9px; }
+.shot-explain ul, .shot-explain ol { margin: 0 0 9px; padding-left: 20px; }
+.shot-explain li { margin: 3px 0; }
+.shot-explain code { font-family: var(--mono); font-size: 12.5px; background: var(--bg-sunken); padding: 1px 5px; border-radius: 4px; }
+.shot-explain strong { color: var(--ink); font-weight: 600; }
+.shot-points { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.shot-points li {
+  position: relative; padding-left: 16px; font-size: 13px; color: var(--ink-2); line-height: 1.6;
+}
+.shot-points li::before {
+  content: ""; position: absolute; left: 2px; top: .62em; width: 5px; height: 5px;
+  border-radius: 50%; background: var(--accent);
+}
+.shot-ask { border-top: 1px dashed var(--line); padding-top: 10px; }
+.shot-ask-title { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 6px; }
+.shot-ask ul { margin: 0; padding-left: 18px; }
+.shot-ask li { font-size: 12.5px; color: var(--ink-2); margin: 3px 0; }
+.shot-ocr { border: 1px solid var(--line); border-radius: 9px; background: var(--bg-sunken); }
+.shot-ocr summary { cursor: pointer; padding: 8px 12px; font-size: 12.5px; color: var(--ink-2); user-select: none; }
+.shot-ocr pre {
+  margin: 0; padding: 0 12px 12px; max-height: 220px; overflow: auto;
+  font-family: var(--mono); font-size: 12px; line-height: 1.65; color: var(--ink-2); white-space: pre-wrap;
+}
+.shot-error { font-size: 13px; color: var(--danger); background: var(--bg-sunken); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; }
+.shot-loading { display: flex; align-items: center; gap: 9px; color: var(--ink-2); font-size: 13.5px; }
+.shot-loading i {
+  width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--line-strong);
+  border-top-color: var(--accent); animation: shot-spin .8s linear infinite;
+}
+@keyframes shot-spin { to { transform: rotate(360deg); } }
+.shot-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 20px; border-top: 1px solid var(--line); background: var(--bg-sunken);
+}
+.shot-hint { font-size: 11.5px; color: var(--ink-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shot-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+body.shot-open { overflow: hidden; }
+
+@media (max-width: 900px) {
+  .shot-modal { padding: 0; }
+  .shot-card { width: 100vw; height: 100dvh; max-height: none; border-radius: 0; border: none; }
+  .shot-body { grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 14px 16px; }
+  .shot-thumb img { max-height: 30vh; }
+  .shot-head { padding: 14px 16px 11px; }
+  .shot-foot { padding: 10px 16px; flex-wrap: wrap; }
+  .shot-actions { width: 100%; justify-content: flex-end; }
+}
+
+/* ---------- 设置页：可折叠高级项与命令块 ---------- */
+details.adv {
+  border: 1px solid var(--line); border-radius: 9px; padding: 8px 12px;
+  background: var(--bg-sunken); margin: 10px 0;
+}
+details.adv summary { cursor: pointer; font-size: 12.5px; color: var(--ink-2); user-select: none; }
+details.adv[open] summary { margin-bottom: 8px; }
+pre.cmd {
+  margin: 6px 0; padding: 10px 11px; border-radius: 7px; background: var(--bg-panel);
+  border: 1px solid var(--line); font-family: var(--mono); font-size: 11.5px;
+  line-height: 1.6; overflow-x: auto; white-space: pre; color: var(--ink-2);
+}

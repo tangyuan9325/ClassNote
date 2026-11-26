@@ -31,6 +31,7 @@ const (
 	menuData   = 1004
 	menuConfig = 1006
 	menuQuit   = 1005
+	menuShot   = 1007
 )
 
 // 窗口消息。
@@ -132,6 +133,7 @@ type TrayStatus struct {
 // TrayActions 是托盘菜单触发的动作。
 type TrayActions struct {
 	Open    func(panel string)
+	Shot    func()        // 截当前画面并交给 AI 讲解
 	Toggle  func() string // 返回给用户看的提示
 	Reports func()
 	Data    func()
@@ -508,6 +510,7 @@ func (t *Tray) showMenu() {
 		toggleText = "结束并生成报告"
 	}
 	appendItem(menu, mfString, menuToggle, toggleText)
+	appendItem(menu, mfString, menuShot, "识图（截图讲解）")
 	appendItem(menu, mfString, menuConfig, "设置…")
 	appendItem(menu, mfSeparator, 0, "")
 	appendItem(menu, mfString, menuReport, "打开报告目录")
@@ -545,6 +548,12 @@ func (t *Tray) RunCommand(id uint32) {
 			msg := t.actions.Toggle()
 			if msg != "" {
 				t.Notify("课记", msg)
+			}
+		})
+	case menuShot:
+		t.invoke(func() {
+			if t.actions.Shot != nil {
+				t.actions.Shot()
 			}
 		})
 	case menuConfig:

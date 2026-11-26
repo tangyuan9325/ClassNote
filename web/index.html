@@ -29,6 +29,10 @@
           <button data-view="history">历史</button>
           <button data-view="timetable">课表</button>
         </div>
+        <button class="btn" id="btn-shot" title="识图：截屏 → 识别文字 → AI 讲解">
+          <svg viewBox="0 0 24 24"><path d="M4 8V6a2 2 0 0 1 2-2h2M20 8V6a2 2 0 0 0-2-2h-2M4 16v2a2 2 0 0 0 2 2h2M20 16v2a2 2 0 0 1-2 2h-2" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/><circle cx="12" cy="12" r="3.2" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M7.5 12c1.2-1.9 2.8-2.9 4.5-2.9s3.3 1 4.5 2.9c-1.2 1.9-2.8 2.9-4.5 2.9s-3.3-1-4.5-2.9Z" stroke="currentColor" stroke-width="1.2" fill="none" opacity=".55"/></svg>
+          识图
+        </button>
         <button class="btn" id="btn-capture" title="立即截取当前幻灯片">
           <svg viewBox="0 0 24 24"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.2l1-1.6A2 2 0 0 1 10.4 3.5h3.2a2 2 0 0 1 1.7 1l1 1.5h1.2A2.5 2.5 0 0 1 20 8.5v8A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5v-8Z" stroke="currentColor" stroke-width="1.6" fill="none"/><circle cx="12" cy="12.4" r="3.3" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
           截图
@@ -470,6 +474,42 @@
   </footer>
 </aside>
 
+<!-- ============ 识图结果 ============ -->
+<div class="shot-modal" id="shot-modal" hidden>
+  <div class="shot-mask" data-shot-close></div>
+  <section class="shot-card" role="dialog" aria-modal="true" aria-label="识图结果">
+    <header class="shot-head">
+      <div class="shot-heading">
+        <span class="shot-eyebrow" id="shot-eyebrow">截图识图</span>
+        <h3 id="shot-title">正在看这张图…</h3>
+      </div>
+      <button class="icon-btn" id="shot-close" title="关闭">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+    <div class="shot-body">
+      <figure class="shot-thumb"><img id="shot-img" alt="截图"><figcaption id="shot-thumb-cap"></figcaption></figure>
+      <div class="shot-main">
+        <div class="shot-meta" id="shot-meta"></div>
+        <div class="shot-explain md" id="shot-explain"></div>
+        <ul class="shot-points" id="shot-points"></ul>
+        <div class="shot-ask" id="shot-ask"></div>
+        <details class="shot-ocr" id="shot-ocr-wrap" hidden>
+          <summary>识别出的文字</summary>
+          <pre id="shot-ocr"></pre>
+        </details>
+        <div class="shot-error" id="shot-error" hidden></div>
+      </div>
+    </div>
+    <footer class="shot-foot">
+      <span class="shot-hint" id="shot-hint"></span>
+      <div class="shot-actions">
+        <button class="btn" id="shot-copy">复制识别文字</button>
+        <button class="btn primary" id="shot-again">再截一张</button>
+      </div>
+    </footer>
+  </section>
+</div>
 <div class="lightbox" id="lightbox" hidden><img id="lightbox-img" alt="幻灯片"></div>
 <div class="toasts" id="toasts"></div>
 

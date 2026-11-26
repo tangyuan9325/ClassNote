@@ -35,7 +35,7 @@ import (
 var webAssets embed.FS
 
 var (
-	version   = "1.2.12"
+	version   = "1.2.13"
 	buildTime = "dev"
 )
 
@@ -166,6 +166,9 @@ func main() {
 	var (
 		tray         *app.Tray
 		shutdownOnce sync.Once
+		// 识图快捷键：配置改动时要换绑，退出时要注销。
+		hotkeyMu  sync.Mutex
+		curHotkey *app.Hotkey
 	)
 
 	// 打开界面：已有窗口就前置，否则新建。
@@ -217,6 +220,12 @@ func main() {
 	forceQuit := func(reason string) {
 		shutdownOnce.Do(func() {
 			logx.Infof("main", "退出程序：%s", reason)
+			hotkeyMu.Lock()
+			if curHotkey != nil {
+				curHotkey.Close()
+				curHotkey = nil
+			}
+			hotkeyMu.Unlock()
 			if tray != nil {
 				tray.Stop()
 			}
@@ -242,9 +251,22 @@ func main() {
 		forceQuit("用户请求退出")
 	}
 
+	// 识图结果的反馈：有面板时界面自己会弹，这里只管最小化/无窗口的情况。
+	shotDone := func(res *lesson.ShotResult, err error) {
+		if tray == nil {
+			return
+		}
+		if err != nil {
+			tray.Notify("识图失败", err.Error())
+			return
+		}
+		tray.Notify("识图完成", res.Title)
+	}
+
 	if !*noTray {
 		tray, err = app.NewTray(filepath.Join(paths.Root, "data"), app.TrayActions{
 			Open:    openUI,
+			Shot:    func() { srv.TriggerShot(shotDone) },
 			Toggle:  toggle,
 			Reports: func() { _ = app.OpenFolder(paths.Reports) },
 			Data:    func() { _ = app.OpenFolder(paths.Root) },
@@ -271,6 +293,34 @@ func main() {
 						"没看到图标？点任务栏的 ^ 展开隐藏图标，把它拖到任务栏上即可固定。")
 				}()
 			}
+		}
+	}
+
+	// 全局快捷键：截图 → 本地识别 → AI 讲解。
+	// 放在托盘之后注册，注册失败才能用气泡告诉用户，而不是只写进日志。
+	applyHotkey := func(combo string) error {
+		hotkeyMu.Lock()
+		defer hotkeyMu.Unlock()
+		if curHotkey != nil {
+			curHotkey.Close()
+			curHotkey = nil
+		}
+		hk, err := app.RegisterHotkey(combo, func() { srv.TriggerShot(shotDone) })
+		if err != nil {
+			return err
+		}
+		curHotkey = hk
+		logx.Infof("main", "识图快捷键已注册：%s", hk.Combo.Text)
+		return nil
+	}
+	srv.SetHotkeyHook(applyHotkey)
+	if err := applyHotkey(cfg.Capture.Hotkey); err != nil {
+		logx.Warnf("main", "识图快捷键注册失败: %v", err)
+		if tray != nil {
+			go func() {
+				time.Sleep(2 * time.Second)
+				tray.Notify("识图快捷键不可用", err.Error()+"（可在设置里换一个组合）")
+			}()
 		}
 	}
 

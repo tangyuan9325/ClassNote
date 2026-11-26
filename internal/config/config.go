@@ -21,6 +21,7 @@ type Config struct {
 	Provider  ProviderConfig     `json:"provider"`
 	WebAI     WebAIConfig        `json:"webAI"`
 	ASR       ASRConfig          `json:"asr"`
+	OCR       OCRConfig          `json:"ocr"`
 	Capture   CaptureConfig      `json:"capture"`
 	Lesson    LessonConfig       `json:"lesson"`
 	Integ     IntegrationsConfig `json:"integrations"`
@@ -172,6 +173,21 @@ type ASRConfig struct {
 	SampleRate int     `json:"sampleRate"` //
 }
 
+// OCRConfig 描述画面文字识别服务。
+//
+// 默认对接 baidu/Unlimited-OCR（3B 文档解析模型，本地 GPU 跑，OpenAI 兼容接口）。
+// 关掉时一切照旧：PPT 走 PPTX 里的文字，识别只由视觉模型负责。
+type OCRConfig struct {
+	Enabled    bool   `json:"enabled"`
+	BaseURL    string `json:"baseUrl"`
+	APIKey     string `json:"apiKey"`
+	Model      string `json:"model"`
+	Prompt     string `json:"prompt"`
+	Mode       string `json:"mode"`       // fallback：PPTX 没文字时才用 | always：每页都用，补手写与图片里的字
+	TimeoutSec int    `json:"timeoutSec"` // 单页识别超时
+	MaxChars   int    `json:"maxChars"`   // 送入分析的最长字符数
+}
+
 // CaptureConfig 描述截图行为。
 type CaptureConfig struct {
 	Mode           string `json:"mode"` // auto | window | fullscreen
@@ -310,6 +326,18 @@ func Default() Config {
 			Device:     -1,
 			SampleRate: 16000,
 		},
+		// 默认开启，但只做「兜底识别」：PPT 课件仍优先读 PPTX 里的文字，
+		// 只有白板、手写、扫描件这类拿不到文本的画面才会走 OCR。
+		// 服务没起时由引擎快速熔断，不会拖慢正常的翻页分析。
+		OCR: OCRConfig{
+			Enabled:    true,
+			BaseURL:    "http://127.0.0.1:10000/v1",
+			Model:      "Unlimited-OCR",
+			Prompt:     "document parsing.",
+			Mode:       "fallback",
+			TimeoutSec: 90,
+			MaxChars:   6000,
+		},
 		Capture: CaptureConfig{
 			Mode:          "auto",
 			IntervalMS:    700,
@@ -377,6 +405,44 @@ func Load(path string) (*Store, error) {
 	return s, nil
 }
 
+// normalizeOCR 清理识别服务参数。用户可能手改过 config.json，
+// 一个带空格的地址或奇怪的模式名会让识别永远失败，这里统一收口。
+func normalizeOCR(o *OCRConfig) {
+	d := Default().OCR
+	o.BaseURL = strings.TrimSpace(o.BaseURL)
+	if o.BaseURL == "" {
+		o.BaseURL = d.BaseURL
+	}
+	// 允许用户直接粘贴 vLLM 的根地址（不带 /v1 也常见），统一补上。
+	if !strings.HasSuffix(o.BaseURL, "/v1") && !strings.Contains(o.BaseURL, "/v1/") {
+		o.BaseURL = strings.TrimRight(o.BaseURL, "/") + "/v1"
+	}
+	o.BaseURL = strings.TrimRight(o.BaseURL, "/")
+	o.Model = strings.TrimSpace(o.Model)
+	if o.Model == "" {
+		o.Model = d.Model
+	}
+	o.Prompt = strings.TrimSpace(o.Prompt)
+	if o.Prompt == "" {
+		o.Prompt = d.Prompt
+	}
+	if o.Mode != "always" && o.Mode != "fallback" {
+		o.Mode = "fallback"
+	}
+	if o.TimeoutSec <= 0 {
+		o.TimeoutSec = d.TimeoutSec
+	}
+	if o.TimeoutSec > 600 {
+		o.TimeoutSec = 600
+	}
+	if o.MaxChars <= 0 {
+		o.MaxChars = d.MaxChars
+	}
+	if o.MaxChars < 200 {
+		o.MaxChars = 200
+	}
+}
+
 func (c *Config) normalize() {
 	d := Default()
 	if c.Server.Access == "" {
@@ -397,6 +463,10 @@ func (c *Config) normalize() {
 	if c.Capture.JPEGQuality < 40 {
 		c.Capture.JPEGQuality = d.Capture.JPEGQuality
 	}
+	if strings.TrimSpace(c.Capture.Hotkey) == "" {
+		c.Capture.Hotkey = d.Capture.Hotkey
+	}
+	normalizeOCR(&c.OCR)
 	if c.Agent.Permission == "" {
 		c.Agent.Permission = "remind"
 	}
@@ -522,8 +592,13 @@ func (s *Store) Redacted() map[string]any {
 	if asrKey != "" {
 		asrKey = maskKey(asrKey)
 	}
+	ocrKey := c.OCR.APIKey
+	if ocrKey != "" {
+		ocrKey = maskKey(ocrKey)
+	}
 	c.Provider.APIKey = key
 	c.ASR.APIKey = asrKey
+	c.OCR.APIKey = ocrKey
 	// GitHub Token 同样要脱敏：它会随 /api/bootstrap 下发到前端，
 	// 而局域网模式下任何持访问密钥的设备都能读到。
 	ghToken := c.GitHub.Token

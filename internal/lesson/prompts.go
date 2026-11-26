@@ -19,7 +19,8 @@ const analysisSystem = `# 角色
 # 你会收到的材料
 - 学科、页码、本页停留时长
 - 上一页的要点（用于承接，不要重复展开）
-- 本页画面文字（从 PPT 文件提取，可能与实际排版顺序略有差异；如果提供了图片，以图片为准）
+- 本页画面文字（优先从 PPT 文件提取；PPT 读不到时会由本地 OCR 模型识别截图，
+  这种文本可能有错字、公式符号偏差或版序错乱，遇到明显错误按上下文改正即可）
 - 本页语音转写（可能为空、可能有识别错误、可能夹杂学生回答）
 
 # 硬性约束
@@ -85,7 +86,7 @@ const chatSystem = `# 角色
 3. 回答控制在 300 字以内，必要时用短列表；不要重复整段笔记。
 4. 用口语化中文，不要写「如上所述」「综上所述」这类套话。`
 
-func analysisUser(subject string, slideIndex int, duration int, boardText string, transcript string, prevSummary string) string {
+func analysisUser(subject string, slideIndex int, duration int, boardText string, boardSource string, transcript string, prevSummary string) string {
 	tr := transcript
 	if len([]rune(tr)) > 6000 {
 		tr = string([]rune(tr)[:6000]) + "…"
@@ -105,18 +106,25 @@ func analysisUser(subject string, slideIndex int, duration int, boardText string
 	if board == "" {
 		board = "（未能读取到画面文字）"
 	}
+	src := ""
+	switch boardSource {
+	case "ocr":
+		src = "\n（来源：本地 OCR 识别截图。可能有少量错字或公式偏差，明显错误按上下文改正；OCR 没识别出来的内容不要臆测）"
+	case "pptx+ocr":
+		src = "\n（前半来自 PPT 文件；标着「补充识别（OCR）」的部分是截图识别结果，可能包含手写批注与图片里的文字）"
+	}
 	return fmt.Sprintf(`学科：%s
 页码：第 %d 页
 本页停留：%s
 上一页要点：%s
 
-【本页画面文字】
+【本页画面文字】%s
 %s
 
 【本页语音转写】
 %s
 
-请按系统提示中的标准分析这一页，输出 JSON。`, subject, slideIndex, dur, prev, board, tr)
+请按系统提示中的标准分析这一页，输出 JSON。`, subject, slideIndex, dur, prev, board, src, tr)
 }
 
 func reportUser(subject string, segments string) string {
@@ -134,4 +142,52 @@ func chatUser(contextText, question string) string {
 
 【学生提问】
 %s`, contextText, question)
+}
+
+// ---------- 截图识图（快捷键触发） ----------
+
+const shotSystem = `# 角色
+你是坐在学生旁边的学科助教。学生刚刚按下「识图」键，把眼前的一块内容（幻灯片、板书、手写笔记、题目、图表）截了下来，想知道这是什么、在讲什么。
+
+# 你会收到
+- 一张截图（可能还有一段本地 OCR 识别出的文字）
+- 学科（可能为空，空就自己判断）
+
+# 硬性约束
+1. 先看清楚画面再回答。图里没有出现的内容一律不写，不要补充课本常识。
+2. 手写、公式、符号看不清时就说「这里看不清」，不要猜一个看起来合理的答案。
+3. OCR 文本只作参考；与图片冲突时以图片为准，并把明显错字改正后再引用。
+4. 讲解要能直接用：先一句话定位，再拆要点和易错点。不要写「首先/其次/最后」这类空架子。
+5. 只输出一个 JSON 对象，不要 Markdown 代码块，不要任何前后缀。
+
+# 输出格式
+{
+  "title": "这块内容是什么，20 字以内",
+  "ocr_text": "画面文字整理，按行用 / 分隔，最多 150 字；纯图无字写「（无文字）」",
+  "explain": "Markdown 讲解，150-350 字：在讲什么、关键概念或步骤、容易错在哪。可用 **加粗** 与列表",
+  "points": ["2-4 条要点，每条不超过 24 字"],
+  "ask": ["1-2 个可以接着追问的问题，没有就给空数组"]
+}`
+
+// ShotPrompt 返回识图使用的系统提示（网页版需要原文，用于预热）。
+func ShotPrompt() string { return shotSystem }
+
+func shotUser(subject, ocrText string) string {
+	sub := strings.TrimSpace(subject)
+	if sub == "" {
+		sub = "（未指定，按画面自行判断）"
+	}
+	ocrPart := "（没有可用的 OCR 文本，请直接看图）"
+	if t := strings.TrimSpace(ocrText); t != "" {
+		if len([]rune(t)) > 4000 {
+			t = string([]rune(t)[:4000]) + "…"
+		}
+		ocrPart = t
+	}
+	return fmt.Sprintf(`学科：%s
+
+【OCR 文本（可能有错字，仅作参考）】
+%s
+
+请按系统提示的格式讲解这张截图，输出 JSON。`, sub, ocrPart)
 }

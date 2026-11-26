@@ -487,6 +487,115 @@ async function captureNow() {
   }
 }
 
+/* ---------------- 识图（快捷键 / 顶栏按钮） ---------------- */
+
+let shotBusy = false;
+
+function shotOpen() {
+  const m = $('#shot-modal');
+  if (!m) return;
+  m.hidden = false;
+  document.body.classList.add('shot-open');
+}
+
+function shotClose() {
+  const m = $('#shot-modal');
+  if (!m) return;
+  m.hidden = true;
+  document.body.classList.remove('shot-open');
+}
+
+function shotLoading() {
+  shotOpen();
+  $('#shot-eyebrow').textContent = '截图识图';
+  $('#shot-title').textContent = '正在看这张图…';
+  $('#shot-meta').innerHTML = '<span class="shot-chip live">识别中</span>';
+  $('#shot-explain').innerHTML = '<p class="shot-loading"><i></i>正在识别画面文字并交给 AI 分析，通常 5-20 秒。</p>';
+  $('#shot-points').innerHTML = '';
+  $('#shot-ask').innerHTML = '';
+  $('#shot-ocr-wrap').hidden = true;
+  $('#shot-error').hidden = true;
+  $('#shot-hint').textContent = '';
+  $('#shot-thumb-cap').textContent = '';
+  const img = $('#shot-img');
+  if (img) img.removeAttribute('src');
+}
+
+function shotError(msg) {
+  shotOpen();
+  const box = $('#shot-error');
+  box.hidden = false;
+  box.textContent = msg || '识图失败';
+  $('#shot-explain').innerHTML = '';
+  $('#shot-title').textContent = '识图没有成功';
+  $('#shot-meta').innerHTML = '<span class="shot-chip bad">失败</span>';
+  const loading = $('#shot-points');
+  if (loading) loading.innerHTML = '';
+  toast(msg || '识图失败', 'err');
+}
+
+function renderShot(shot) {
+  if (!shot) return;
+  shotOpen();
+  $('#shot-eyebrow').textContent = shot.warning ? '截图识图 · 有提示' : '截图识图';
+  $('#shot-title').textContent = shot.title || '画面内容';
+
+  const chips = [];
+  if (shot.ocrText) chips.push(`识别 ${[...shot.ocrText].length} 字`);
+  if (shot.ocrMs) chips.push(`识别 ${(shot.ocrMs / 1000).toFixed(1)}s`);
+  if (shot.elapsedMs) chips.push(`共 ${(shot.elapsedMs / 1000).toFixed(1)}s`);
+  if (shot.model) chips.push(shot.model);
+  if (shot.tokens) chips.push(`${shot.tokens} tokens`);
+  if (shot.warning) chips.push('⚠ ' + shot.warning);
+  $('#shot-meta').innerHTML = chips.map((c) => `<span class="shot-chip${c.startsWith('⚠') ? ' warn' : ''}">${esc(c)}</span>`).join('');
+
+  const img = $('#shot-img');
+  if (shot.image) img.src = `/api/media/${shot.image}`;
+  $('#shot-thumb-cap').textContent = shot.width ? `${shot.width} × ${shot.height}` : '';
+
+  $('#shot-explain').innerHTML = md(shot.explain || '（模型没有给出讲解）');
+  $('#shot-points').innerHTML = (shot.points || []).map((t) => `<li>${esc(t)}</li>`).join('');
+  const ask = shot.ask || [];
+  $('#shot-ask').innerHTML = ask.length
+    ? `<div class="shot-ask-title">可以接着想</div><ul>${ask.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>`
+    : '';
+
+  const ocrWrap = $('#shot-ocr-wrap');
+  if (shot.ocrText) {
+    ocrWrap.hidden = false;
+    $('#shot-ocr').textContent = shot.ocrText;
+  } else {
+    ocrWrap.hidden = true;
+  }
+  $('#shot-error').hidden = true;
+  $('#shot-hint').textContent = shot.warning || '';
+}
+
+async function shotNow() {
+  if (shotBusy) { shotOpen(); return; }
+  shotBusy = true;
+  shotLoading();
+  try {
+    const d = await api.post('/api/lesson/shot');
+    if (d.shot) renderShot(d.shot);
+  } catch (e) {
+    shotError(e.message);
+  } finally {
+    shotBusy = false;
+  }
+}
+
+async function copyShotText() {
+  const text = $('#shot-ocr').textContent || $('#shot-explain').textContent || '';
+  if (!text.trim()) { toast('没有可复制的文字'); return; }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('已复制', 'ok');
+  } catch (e) {
+    toast('浏览器不允许写剪贴板', 'err');
+  }
+}
+
 async function makeReport() {
   const btn = $('#btn-report');
   btn.disabled = true;
@@ -758,6 +867,10 @@ export async function saveConfig(silent = false) {
 /* ---------------- 事件 ---------------- */
 
 const handlers = {
+  // 识图：热键触发时，面板先开、结果后到。
+  shot_started() { shotLoading(); },
+  quick_shot(data) { renderShot(data); },
+  shot_error(data) { shotError(data?.message || '识图失败'); },
   // DSH 运行时的安装/启动日志：只有插件页有对应面板，这里空跑也不报错。
   dsh_log(data) { appendDshLog(data); },
   // 语音模型的下载进度：设置页会用到，其它页面忽略。
@@ -850,6 +963,11 @@ function bindGlobal() {
   $('#btn-empty-start')?.addEventListener('click', toggleLesson);
   $('#btn-empty-settings')?.addEventListener('click', () => openSettings(S));
   $('#btn-capture').addEventListener('click', captureNow);
+  $('#btn-shot')?.addEventListener('click', shotNow);
+  $('#shot-close')?.addEventListener('click', shotClose);
+  $('#shot-again')?.addEventListener('click', shotNow);
+  $('#shot-copy')?.addEventListener('click', copyShotText);
+  document.querySelectorAll('[data-shot-close]').forEach((n) => n.addEventListener('click', shotClose));
   $('#btn-report').addEventListener('click', makeReport);
   $('#btn-ask').addEventListener('click', ask);
   $('#btn-settings').addEventListener('click', () => openSettings(S));
@@ -894,6 +1012,7 @@ function bindGlobal() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       $('#lightbox').hidden = true;
+      if (!$('#shot-modal')?.hidden) shotClose();
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
       e.preventDefault(); saveConfig();

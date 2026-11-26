@@ -127,11 +127,19 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if maskedOrEmpty(incoming.ASR.APIKey) {
 		incoming.ASR.APIKey = cur.ASR.APIKey
 	}
+	if maskedOrEmpty(incoming.OCR.APIKey) {
+		// 识别服务通常在本机、不带密钥；但接远程服务时同样不能把掩码存回去。
+		incoming.OCR.APIKey = cur.OCR.APIKey
+	}
 	if maskedOrEmpty(incoming.GitHub.Token) {
 		incoming.GitHub.Token = cur.GitHub.Token
 	}
 	if incoming.Onboarded == false {
 		incoming.Onboarded = cur.Onboarded
+	}
+	// 旧版界面不会提交 ocr 段：整段等于零值时沿用原配置，别把用户配好的地址清掉。
+	if incoming.OCR.BaseURL == "" && incoming.OCR.Model == "" {
+		incoming.OCR = cur.OCR
 	}
 	// 路径为空时保留原值：界面可能只提交部分字段，不该把已配置的路径清掉。
 	if incoming.Integ.ClassIsland.DataDir == "" {
@@ -166,6 +174,12 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	s.icc.Update(cfg.Integ.ICC)
 	client, cerr := s.RefreshClient()
 	resp := map[string]any{"config": s.cfg.Redacted(), "ok": true}
+	// 快捷键改了要立刻生效：老组合键注册着不注销，两个键会同时响应。
+	if cfg.Capture.Hotkey != cur.Capture.Hotkey {
+		if err := s.applyHotkey(cfg.Capture.Hotkey); err != nil {
+			resp["hotkeyError"] = err.Error()
+		}
+	}
 	if cerr != nil {
 		resp["clientError"] = cerr.Error()
 	} else if client != nil {
@@ -446,6 +460,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	icc := s.icc.State()
 	writeJSON(w, map[string]any{
 		"status": st,
+		"ocr":    s.engine.OCRStatus(),
 		"classIsland": map[string]any{
 			"inClass": ci.InClass, "preparing": ci.Preparing, "subject": subjectOf(ci.Current),
 			"next": subjectOf(ci.Next), "nextStart": nextStart(ci.Next), "monitored": ci.Monitored,

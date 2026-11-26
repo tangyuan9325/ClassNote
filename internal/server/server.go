@@ -83,6 +83,31 @@ type Server struct {
 	// 以便顺带停掉 whisper-server、DSH 与托盘图标
 	exitMu sync.Mutex
 	exitFn func()
+
+	// 全局热键：main 负责注册，改配置时由这里回调重绑。
+	hotkeyMu sync.Mutex
+	hotkeyFn func(string) error
+
+	// 识图同一时刻只跑一个，避免连按快捷键叠出多次识别。
+	shotBusy atomic.Bool
+}
+
+// SetHotkeyHook 注入热键重绑函数（main 里注册）。
+func (s *Server) SetHotkeyHook(fn func(string) error) {
+	s.hotkeyMu.Lock()
+	s.hotkeyFn = fn
+	s.hotkeyMu.Unlock()
+}
+
+// applyHotkey 按新的组合键重新注册。
+func (s *Server) applyHotkey(key string) error {
+	s.hotkeyMu.Lock()
+	fn := s.hotkeyFn
+	s.hotkeyMu.Unlock()
+	if fn == nil {
+		return nil // 用 -no-tray 之类方式启动时没有热键，不算错
+	}
+	return fn(key)
 }
 
 // New 创建服务。
@@ -176,6 +201,8 @@ func (s *Server) routes() {
 	m.HandleFunc("/api/lesson/stop", s.handleStop)
 	m.HandleFunc("/api/lesson/report", s.handleReport)
 	m.HandleFunc("/api/lesson/capture", s.handleCapture)
+	m.HandleFunc("/api/lesson/shot", s.handleShot)
+	m.HandleFunc("/api/ocr/test", s.handleOCRTest)
 	m.HandleFunc("/api/lesson/ask", s.handleAsk)
 	m.HandleFunc("/api/lesson/note", s.handleNote)
 	m.HandleFunc("/api/lesson/utterance", s.handleUtterance)

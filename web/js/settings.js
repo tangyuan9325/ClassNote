@@ -77,7 +77,8 @@ async function save() {
     const d = await api.post('/api/config', S.cfg);
     S.cfg = d.config.config;
     $('#drawer-saved').textContent = '已保存 · ' + new Date().toLocaleTimeString();
-    toast('设置已保存', 'ok');
+    if (d.hotkeyError) toast('快捷键没绑定成功：' + d.hotkeyError, 'err');
+    else toast('设置已保存', 'ok');
   } catch (e) {
     toast('保存失败：' + e.message, 'err');
   }
@@ -207,6 +208,7 @@ function asrTab(cfg) {
 
 function captureTab(cfg) {
   const c = cfg.capture;
+  const o = cfg.ocr || {};
   return `
     <h3>检测方式</h3>
     <div class="desc">优先通过 PowerPoint / WPS 的 COM 接口读取页码并导出高清图片（画面干净、无批注遮挡）；接口不可用时退回到窗口截图 + 画面差异检测。</div>
@@ -223,7 +225,38 @@ function captureTab(cfg) {
       <label class="field"><span>JPEG 质量</span><input id="f-capq" type="number" min="50" max="100" value="${c.jpegQuality}"></label>
     </div>
     <label class="field"><span>画面差异阈值（0-64，越大越迟钝）</span><input id="f-capd" type="number" min="0" max="40" value="${c.diffThreshold}"></label>
-    <div class="desc">手动截图的快捷键在程序启动时注册为 Ctrl+Alt+S（可在 config.json 修改）。</div>`;
+    <h3>识图快捷键</h3>
+    <div class="desc">按下快捷键立刻截取当前画面：先做本地文字识别，再交给 AI 讲解。不用先开始记录，改完保存即生效。</div>
+    <label class="field"><span>组合键</span><input id="f-caphk" value="${esc(c.hotkey || 'Ctrl+Alt+S')}" placeholder="Ctrl+Alt+S" autocomplete="off"></label>
+
+    <h3>画面文字识别（OCR）</h3>
+    <div class="desc">接一个本地 Unlimited-OCR（3B 文档解析模型，一次前向解析整页）：手写板书、扫描讲义、图片里的字都能转成文字，再交给模型分析。默认只在 PPT 文件读不到文字时启用。</div>
+    <div class="switch-row"><div><div class="label">启用本地识别</div><div class="sub">连不上时自动暂停 90 秒，不影响正常上课</div></div>
+      <label class="switch"><input type="checkbox" id="f-ocren" ${o.enabled !== false ? 'checked' : ''}><i></i></label></div>
+    <div class="field-row two">
+      <label class="field"><span>服务地址</span><input id="f-ocrurl" value="${esc(o.baseUrl || 'http://127.0.0.1:10000/v1')}" placeholder="http://127.0.0.1:10000/v1"></label>
+      <label class="field"><span>模型名</span><input id="f-ocrmodel" value="${esc(o.model || 'Unlimited-OCR')}"></label>
+    </div>
+    <label class="field"><span>识别模式</span>
+      <select id="f-ocrmode">
+        <option value="fallback" ${o.mode === 'always' ? '' : 'selected'}>兜底：PPT 读不到文字时才识别（推荐）</option>
+        <option value="always" ${o.mode === 'always' ? 'selected' : ''}>每页都识别：补手写批注与图片里的字</option>
+      </select></label>
+    <div class="field-row two">
+      <label class="field"><span>超时（秒）</span><input id="f-ocrto" type="number" min="5" max="600" value="${o.timeoutSec || 90}"></label>
+      <label class="field"><span>最长字数</span><input id="f-ocrmax" type="number" min="200" max="20000" step="100" value="${o.maxChars || 6000}"></label>
+    </div>
+    <button class="btn" id="f-ocrtest">测试识别（截当前屏幕）</button>
+    <div class="test-result" id="f-ocr-result" hidden></div>
+    <details class="adv">
+      <summary>识别提示词与启动命令</summary>
+      <label class="field"><span>Prompt</span><input id="f-ocrprompt" value="${esc(o.prompt || 'document parsing.')}"></label>
+      <div class="desc">Unlimited-OCR 用 <code>document parsing.</code>；换成别的服务就按它的要求填。</div>
+      <pre class="cmd">docker run --rm --gpus all --network host --ipc host \\
+  vllm/vllm-openai:unlimited-ocr baidu/Unlimited-OCR \\
+  --trust-remote-code</pre>
+      <div class="desc">需要 NVIDIA 显卡。vLLM 默认 8000 端口，SGLang 示例用 10000；按实际端口改上面的地址即可。</div>
+    </details>`;
 }
 
 function lessonTab(cfg) {
@@ -851,6 +884,30 @@ function bindTab(name) {
   if (name === 'about') {
     bindUpdate(cfg);
   }
+  if (name === 'capture') {
+    $('#f-ocrtest')?.addEventListener('click', async () => {
+      readTab('capture');
+      const box = $('#f-ocr-result');
+      box.hidden = false;
+      box.className = 'test-result';
+      box.textContent = '截屏并识别中…（模型首次加载可能要 1 分钟）';
+      try {
+        const d = await api.post('/api/ocr/test');
+        box.className = 'test-result ' + (d.ok ? 'ok' : 'err');
+        if (d.ok) {
+          const head = `识别成功 · ${d.chars} 字 · ${(d.elapsedMs / 1000).toFixed(1)} 秒`;
+          const sample = (d.text || '（画面里没有文字）').slice(0, 200);
+          box.textContent = `${head}\n${d.desc || ''}\n\n${sample}`;
+        } else {
+          box.textContent = `失败：${d.error || '未知错误'}\n${d.desc || ''}`;
+        }
+      } catch (e) {
+        box.className = 'test-result err';
+        box.textContent = e.message;
+      }
+    });
+    return;
+  }
   if (name === 'model') {
     $$('#s-mode .seg-item').forEach((b) => b.addEventListener('click', () => {
       cfg.provider.mode = b.dataset.mode;
@@ -1107,6 +1164,16 @@ function readTab(name) {
     const w = parseInt(val('#f-capw'), 10); if (!Number.isNaN(w)) cfg.capture.maxWidth = w;
     const q = parseInt(val('#f-capq'), 10); if (!Number.isNaN(q)) cfg.capture.jpegQuality = q;
     const d = parseInt(val('#f-capd'), 10); if (!Number.isNaN(d)) cfg.capture.diffThreshold = d;
+    const hk = val('#f-caphk');
+    if (hk && hk.trim()) cfg.capture.hotkey = hk.trim();
+    cfg.ocr = cfg.ocr || {};
+    cfg.ocr.enabled = chk('#f-ocren');
+    cfg.ocr.baseUrl = val('#f-ocrurl') || cfg.ocr.baseUrl || 'http://127.0.0.1:10000/v1';
+    cfg.ocr.model = val('#f-ocrmodel') || cfg.ocr.model || 'Unlimited-OCR';
+    cfg.ocr.mode = val('#f-ocrmode') || 'fallback';
+    const oto = parseInt(val('#f-ocrto'), 10); if (!Number.isNaN(oto)) cfg.ocr.timeoutSec = oto;
+    const omx = parseInt(val('#f-ocrmax'), 10); if (!Number.isNaN(omx)) cfg.ocr.maxChars = omx;
+    const opr = val('#f-ocrprompt'); if (opr) cfg.ocr.prompt = opr;
   }
   if (name === 'lesson') {
     cfg.lesson.autoStart = chk('#f-autostart');
